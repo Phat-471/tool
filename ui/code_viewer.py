@@ -83,5 +83,17 @@ class CodeViewerWidget(QWidget):
         self.highlighter = SimpleSyntaxHighlighter(self.editor.document(), language)
         self.highlighter.rehighlight()
 
+    def go_to_line(self, line_number: int):
+        """Di chuyển con trỏ và cuộn tới dòng chỉ định (1-indexed)."""
+        doc = self.editor.document()
+        if line_number < 1 or line_number > doc.blockCount():
+            return
+
+        block = doc.findBlockByLineNumber(line_number - 1)
+        cursor = self.editor.textCursor()
+        cursor.setPosition(block.position())
+        self.editor.setTextCursor(cursor)
+        self.editor.centerCursor()
+
     def clear(self):
         self.editor.clear()

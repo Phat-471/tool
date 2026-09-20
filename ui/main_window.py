@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -26,6 +27,7 @@ from core.file_manager import FileManager
 from core.detector import FileDetector
 from ui.code_viewer import CodeViewerWidget
 from ui.worker_thread import DecompileWorker
+from ui.search_widget import GlobalSearchWidget
 from config import SUPPORTED_EXTENSIONS
 
 class MainWindow(QMainWindow):
@@ -132,9 +134,15 @@ class MainWindow(QMainWindow):
         tree_container = QWidget()
         tree_layout = QVBoxLayout(tree_container)
         tree_layout.setContentsMargins(0, 0, 0, 0)
-        lbl_tree = QLabel("📂 Cấu trúc mã nguồn")
-        lbl_tree.setStyleSheet("font-weight: bold;")
-        tree_layout.addWidget(lbl_tree)
+        self.lbl_tree = QLabel("📂 Cấu trúc mã nguồn")
+        self.lbl_tree.setStyleSheet("font-weight: bold;")
+        tree_layout.addWidget(self.lbl_tree)
+
+        # Ô lọc nhanh cây file
+        self.txt_tree_filter = QLineEdit()
+        self.txt_tree_filter.setPlaceholderText("🔍 Lọc tệp theo tên...")
+        self.txt_tree_filter.textChanged.connect(self.filter_tree)
+        tree_layout.addWidget(self.txt_tree_filter)
 
         self.file_tree = QTreeWidget()
         self.file_tree.setHeaderLabels(["Tên tệp"])
@@ -176,6 +184,11 @@ class MainWindow(QMainWindow):
         self.report_viewer.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E2E8F0; padding: 8px;")
         report_layout.addWidget(self.report_viewer)
         self.tabs.addTab(tab_report, "📊 Phân tích & Strings")
+
+        # Tab 3: Tìm kiếm toàn cục trong code
+        self.search_widget = GlobalSearchWidget()
+        self.search_widget.navigate_to_code.connect(self.on_search_navigation)
+        self.tabs.addTab(self.search_widget, "🔍 Tìm kiếm trong code")
 
         splitter.addWidget(self.tabs)
         splitter.setSizes([300, 800])
@@ -278,6 +291,7 @@ class MainWindow(QMainWindow):
 
         # Xây dựng cây thư mục trên giao diện
         self.populate_tree(self.recovered_files)
+        self.search_widget.set_files(self.recovered_files)
         self.tabs.setCurrentIndex(0)
 
         QMessageBox.information(
@@ -351,9 +365,42 @@ class MainWindow(QMainWindow):
 
     def populate_tree(self, files_dict: dict):
         self.file_tree.clear()
+        self.lbl_tree.setText(f"📂 Cấu trúc ({len(files_dict)} tệp)")
         for rel_path, full_path in files_dict.items():
             item = QTreeWidgetItem(self.file_tree, [rel_path])
             item.setData(0, Qt.ItemDataRole.UserRole, full_path)
+
+    def filter_tree(self, text: str):
+        """Lọc cây tệp theo từ khóa thời gian thực."""
+        query = text.strip().lower()
+        root = self.file_tree.invisibleRootItem()
+        visible_count = 0
+        for i in range(root.childCount()):
+            item = root.child(i)
+            match = not query or query in item.text(0).lower()
+            item.setHidden(not match)
+            if match:
+                visible_count += 1
+        self.lbl_tree.setText(f"📂 Cấu trúc ({visible_count}/{len(self.recovered_files)} tệp)")
+
+    def on_search_navigation(self, file_path: str, line_no: int):
+        """Khi người dùng nhấp đúp vào kết quả tìm kiếm -> nhảy tới file và dòng code đó."""
+        if not file_path or not os.path.isfile(file_path):
+            return
+
+        self.tabs.setCurrentIndex(0)
+        rel_name = os.path.basename(file_path)
+        self.lbl_current_file.setText(f"💻 Mã nguồn: {rel_name} (Dòng {line_no})")
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            ext = Path(file_path).suffix.lower()
+            lang = "csharp" if ext in [".cs", ".csproj"] else "python" if ext == ".py" else "java"
+            self.code_viewer.set_code(content, lang)
+            self.code_viewer.go_to_line(line_no)
+        except Exception as e:
+            self.code_viewer.set_code(f"// Không thể đọc file: {str(e)}")
 
     def on_file_item_clicked(self, item: QTreeWidgetItem, column: int):
         full_path = item.data(0, Qt.ItemDataRole.UserRole)

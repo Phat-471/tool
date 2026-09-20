@@ -3,11 +3,11 @@
     "file_size_kb": 3335.0,
     "protection_analysis": {
         "protections": [
-            "Không phát hiện Packer/Obfuscator phổ biến (Mã nguồn sạch)"
+            "Phát hiện mã bị làm rối / mã hóa chuỗi (Obfuscated .NET)"
         ],
         "details": {
             "format": "PE (Portable Executable)",
-            "runtime": "Native Windows (C/C++)"
+            "runtime": ".NET Framework / .NET Core (C# Managed Code)"
         }
     },
     "strings_analysis": {

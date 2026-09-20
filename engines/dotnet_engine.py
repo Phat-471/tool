@@ -72,24 +72,29 @@ class DotNetDecompiler(BaseDecompiler):
             # Kiểm tra xem có file .cs nào được sinh ra không
             cs_files = list(out_path.rglob("*.cs"))
             if result.returncode == 0 or cs_files:
+                from core.solution_generator import SolutionGenerator
+                sln_file = SolutionGenerator.generate_solution_for_directory(str(out_path))
+                sln_msg = f" (Đã tạo Solution: {Path(sln_file).name})" if sln_file else ""
+
                 return {
                     "success": True,
                     "output_dir": str(out_path.resolve()),
-                    "message": f"Dịch ngược C# thành công ({len(cs_files)} tệp).",
+                    "message": f"Dịch ngược C# thành công ({len(cs_files)} tệp){sln_msg}.",
                     "stdout": result.stdout,
                     "stderr": "",
                 }
 
             err_text = (result.stderr or "") + (result.stdout or "")
 
-            # Bước 2: Nếu gặp lỗi Metadata (Obfuscated) -> Thử dùng de4dot gỡ làm rối
+            # Bước 2: Nếu gặp lỗi Metadata (Obfuscated) -> Thử dùng de4dot gỡ làm rối chuyên sâu
             if "BadImageFormatException" in err_text or "Illegal tables" in err_text or result.returncode != 0:
                 de4dot_bin = self.get_de4dot_executable()
 
                 if de4dot_bin:
                     cleaned_file = out_path / f"{Path(input_path).stem}_cleaned.dll"
                     try:
-                        fix_cmd = [de4dot_bin, input_path, "-o", str(cleaned_file)]
+                        # Thêm tham số --strtyp delegate để giải mã chuỗi động (Dynamic String Decryption)
+                        fix_cmd = [de4dot_bin, input_path, "-o", str(cleaned_file), "--strtyp", "delegate"]
                         subprocess.run(fix_cmd, capture_output=True, text=True, timeout=180)
 
                         if cleaned_file.exists() and cleaned_file.stat().st_size > 0:
@@ -99,10 +104,14 @@ class DotNetDecompiler(BaseDecompiler):
 
                             cleaned_cs_files = list(out_path.rglob("*.cs"))
                             if cleaned_cs_files:
+                                from core.solution_generator import SolutionGenerator
+                                sln_file = SolutionGenerator.generate_solution_for_directory(str(out_path))
+                                sln_msg = f" & Tạo file Solution ({Path(sln_file).name})" if sln_file else ""
+
                                 return {
                                     "success": True,
                                     "output_dir": str(out_path.resolve()),
-                                    "message": f"✅ Đã tự động gỡ làm rối bằng de4dot và dịch ngược thành công {len(cleaned_cs_files)} tệp mã nguồn C#!",
+                                    "message": f"✅ Đã tự động gỡ làm rối bằng de4dot và dịch ngược thành công {len(cleaned_cs_files)} tệp mã nguồn C#{sln_msg}!",
                                     "stdout": retry_res.stdout,
                                     "stderr": "",
                                 }

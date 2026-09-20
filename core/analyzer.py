@@ -109,7 +109,7 @@ class FileAnalyzer:
                     protections_found.append("UPX Packer")
 
                 # Kiểm tra chữ ký Obfuscator phổ biến trong .NET
-                if b"ConfuserEx" in content or b"Confuser.Core" in content:
+                if b"ConfuserEx" in content or b"Confuser.Core" in content or b"ConfusedBy" in content:
                     protections_found.append("ConfuserEx (.NET Obfuscator)")
                 if b"Dotfuscator" in content:
                     protections_found.append("Dotfuscator (.NET)")
@@ -118,9 +118,13 @@ class FileAnalyzer:
                 if b"SmartAssembly" in content:
                     protections_found.append("SmartAssembly (.NET)")
 
-                # Kiểm tra .NET CLR Header
-                if b"_CorDllMain" in content or b"_CorExeMain" in content or b"mscoree.dll" in content:
-                    file_details["runtime"] = ".NET Framework / .NET Core"
+                # Đồng bộ kiểm tra .NET CLR Header từ FileDetector
+                from core.detector import FileDetector
+                if FileDetector.is_dotnet_assembly(file_path):
+                    file_details["runtime"] = ".NET Framework / .NET Core (C# Managed Code)"
+                    # Nếu có chuỗi làm rối nhưng chưa phát hiện Obfuscator cụ thể
+                    if not protections_found or "Không phát hiện" in protections_found[0]:
+                        protections_found = ["Phát hiện mã bị làm rối / mã hóa chuỗi (Obfuscated .NET)"]
                 else:
                     file_details["runtime"] = "Native Windows (C/C++)"
 

@@ -529,12 +529,29 @@ class MainWindow(QMainWindow):
         if not out_path.is_dir():
             return
 
-        # Quét toàn bộ file trong output (bao gồm .txt, .h, .cs, .py …)
+        # Sắp xếp ưu tiên: mã nguồn (.java, .cs, .py, .xml) và thư mục sources/ lên đầu
+        # Các file ảnh (.png, .jpg, .webp) và nhị phân (.so, .arsc) xuống cuối
+        def sort_priority(item_path: Path):
+            rel = str(item_path.relative_to(out_path)).replace("\\", "/")
+            ext = item_path.suffix.lower()
+            is_source_dir = rel.startswith("sources/")
+            is_code_ext = ext in (".java", ".cs", ".py", ".xml", ".json", ".h", ".txt", ".asm")
+            is_binary = ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".so", ".dex", ".arsc") or rel.endswith(".9.png")
+            if is_source_dir and is_code_ext:
+                prio = 0
+            elif is_code_ext:
+                prio = 1
+            elif not is_binary:
+                prio = 2
+            else:
+                prio = 3
+            return (prio, rel)
+
+        all_files = sorted([f for f in out_path.rglob("*") if f.is_file()], key=sort_priority)
         fresh_files: dict = {}
-        for f in sorted(out_path.rglob("*")):
-            if f.is_file():
-                rel = str(f.relative_to(out_path))
-                fresh_files[rel] = str(f)
+        for f in all_files:
+            rel = str(f.relative_to(out_path))
+            fresh_files[rel] = str(f)
 
         if not fresh_files:
             return
@@ -549,6 +566,14 @@ class MainWindow(QMainWindow):
                 "ok",
                 f"✅ Cây thư mục đã được làm mới – {count} tệp sẵn sàng."
             )
+            # Tự động chọn file mã nguồn đầu tiên để hiển thị
+            for idx in range(self.file_tree.topLevelItemCount()):
+                item = self.file_tree.topLevelItem(idx)
+                txt = item.text(0).lower()
+                if txt.endswith((".java", ".cs", ".py")):
+                    self.file_tree.setCurrentItem(item)
+                    self.on_file_item_clicked(item, 0)
+                    break
 
     def filter_tree(self, text: str):
         """Lọc cây tệp theo từ khóa thời gian thực."""
@@ -586,10 +611,27 @@ class MainWindow(QMainWindow):
         full_path = item.data(0, Qt.ItemDataRole.UserRole)
         if full_path and os.path.isfile(full_path):
             self.lbl_current_file.setText(f"💻 Mã nguồn: {item.text(0)}")
+            ext = Path(full_path).suffix.lower()
+            
+            # Kiểm tra nếu là file nhị phân / hình ảnh thì thông báo rõ ràng
+            binary_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".bmp", ".so", ".dex", ".arsc", ".bin"}
+            if ext in binary_exts or full_path.endswith(".9.png"):
+                self.code_viewer.set_code(
+                    f"// =====================================================================\n"
+                    f"// 🖼️ Tệp tài nguyên / hình ảnh: {Path(full_path).name}\n"
+                    f"// Đường dẫn: {item.text(0)}\n"
+                    f"// =====================================================================\n\n"
+                    f"// Đây là tệp tài nguyên đồ họa (PNG/Image) trong bộ cài APK, không phải mã nguồn.\n"
+                    f"// 👉 Để xem mã nguồn Java:\n"
+                    f"// 1. Hãy bấm vào các tệp có đuôi .java trong thư mục 'sources\\'\n"
+                    f"// 2. Hoặc gõ '.java' vào ô '🔍 Lọc tệp theo tên...' ở góc trên bên trái.\n",
+                    "java"
+                )
+                return
+
             try:
                 with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
-                ext = Path(full_path).suffix.lower()
                 lang = "csharp" if ext in [".cs", ".csproj"] else "python" if ext == ".py" else "java"
                 self.code_viewer.set_code(content, lang)
             except Exception as e:

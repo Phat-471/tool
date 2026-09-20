@@ -19,6 +19,9 @@ _BAD_IMAGE_MARKERS: List[str] = [
     "Metadata decode error",
 ]
 
+# So luot de4dot toi da cho ma hoa nhieu lop
+_MAX_DEOBF_PASSES = 3
+
 
 class DotNetDecompiler(BaseDecompiler):
     """Engine dịch ngược .NET Assembly (.dll, .exe) sử dụng ILSpy CLI (ilspycmd) kết hợp de4dot."""
@@ -51,53 +54,110 @@ class DotNetDecompiler(BaseDecompiler):
         return self.get_executable_path() is not None
 
     # ------------------------------------------------------------------
-    # Pre-processing: de4dot
+    # Pre-processing: Multi-layer Deobfuscation Engine
     # ------------------------------------------------------------------
+
+    def _detect_obfuscator_profile(self, input_path: str):
+        """Detect obfuscator type using ObfuscatorDetector module."""
+        try:
+            from core.obfuscator_detector import ObfuscatorDetector
+            return ObfuscatorDetector.detect(input_path)
+        except Exception:
+            return None
 
     def _preprocess_with_de4dot(
         self, input_path: str, work_dir: Path
     ) -> Tuple[Optional[str], str]:
-        """Chạy de4dot để gỡ làm rối file DLL trước khi dịch ngược.
+        """Keep old API - delegate to _multi_layer_deobfuscate."""
+        return self._multi_layer_deobfuscate(input_path, work_dir)
 
-        Returns:
-            (cleaned_path, log_message)
-            - cleaned_path: đường dẫn file đã làm sạch, hoặc None nếu thất bại.
-            - log_message : mô tả kết quả.
+    def _multi_layer_deobfuscate(
+        self, input_path: str, work_dir: Path
+    ) -> Tuple[Optional[str], str]:
+        """Multi-layer deobfuscation: detect obfuscator -> apply optimal strategies.
+
+        Flow:
+          1. Detect obfuscator profile (ConfuserEx / Eazfuscator / SmartAssembly ...)
+          2. Select de4dot strategies from profile (targeted params per obfuscator)
+          3. Run up to _MAX_DEOBF_PASSES passes in sequence
+          4. Chain passes for multi-layer files (output becomes input of next pass)
+          5. Return best cleaned file found
+
+        Returns: (cleaned_path, log_message)
         """
         de4dot_bin = self.get_de4dot_executable()
         if not de4dot_bin:
-            return None, "⚠️ Không tìm thấy de4dot – bỏ qua bước gỡ làm rối."
+            return None, "de4dot not found in tools/ or PATH."
 
         stem = Path(input_path).stem
-        cleaned_file = work_dir / f"{stem}_cleaned.dll"
+        logs: List[str] = []
 
-        # Thử với --strtyp delegate trước (giải mã chuỗi động của ConfuserEx),
-        # sau đó thử lại không có tham số đặc biệt.
-        cmds_to_try = [
-            [de4dot_bin, input_path, "-o", str(cleaned_file), "--strtyp", "delegate"],
-            [de4dot_bin, input_path, "-o", str(cleaned_file)],
-        ]
+        # Step 1: Detect obfuscator to select optimal strategy
+        profile = self._detect_obfuscator_profile(input_path)
+        if profile and profile.is_detected:
+            strategies = list(profile.de4dot_strategies or [])
+            logs.append(
+                "Detected: " + profile.name
+                + " | Level=" + profile.level
+                + " | Multi-layer=" + str(profile.is_multi_layer)
+            )
+        else:
+            # Generic: try multiple strtyp modes
+            strategies = [
+                ["--strtyp", "delegate"],
+                ["--strtyp", "emptyclass"],
+                ["--strtyp", "static"],
+                [],
+            ]
+            logs.append("Generic strategy (obfuscator not identified).")
 
-        for cmd in cmds_to_try:
+        # Step 2: Apply strategies pass by pass
+        current_input = input_path
+        best_cleaned: Optional[str] = None
+        best_size = 0
+        pass_idx = 0
+
+        for pass_idx, strategy in enumerate(strategies[:_MAX_DEOBF_PASSES], start=1):
+            cleaned_file = work_dir / (stem + "_pass" + str(pass_idx) + ".dll")
+            cmd = [de4dot_bin, current_input, "-o", str(cleaned_file)] + strategy
+            strat_label = " ".join(strategy) if strategy else "(generic)"
+            logs.append("Pass " + str(pass_idx) + ": de4dot " + strat_label)
+
             try:
                 subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=180,
+                    cmd, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=240,
                 )
-                if cleaned_file.exists() and cleaned_file.stat().st_size > 0:
-                    return str(cleaned_file), (
-                        f"✅ de4dot xử lý thành công → {cleaned_file.name}"
-                    )
             except subprocess.TimeoutExpired:
-                return None, "⚠️ de4dot quá thời gian (timeout 180s)."
+                logs.append("Pass " + str(pass_idx) + ": Timeout 240s.")
+                break
             except Exception as exc:
-                return None, f"⚠️ de4dot gặp lỗi: {exc}"
+                logs.append("Pass " + str(pass_idx) + ": Error: " + str(exc))
+                break
 
-        return None, "⚠️ de4dot không tạo được file đã làm sạch."
+            if cleaned_file.exists() and cleaned_file.stat().st_size > 0:
+                sz = cleaned_file.stat().st_size
+                logs.append("Pass " + str(pass_idx) + ": OK (" + str(sz // 1024) + " KB).")
+                if sz > best_size:
+                    best_size = sz
+                    best_cleaned = str(cleaned_file)
+                # Multi-layer chaining: feed this output into next pass
+                if profile and profile.is_multi_layer:
+                    current_input = str(cleaned_file)
+            else:
+                logs.append("Pass " + str(pass_idx) + ": No output produced.")
+
+        if best_cleaned:
+            final_path = work_dir / (stem + "_cleaned.dll")
+            import shutil as _sh
+            _sh.copy2(best_cleaned, str(final_path))
+            log_str = " | ".join(logs)
+            return (
+                str(final_path),
+                "Multi-layer deobf done (" + str(pass_idx) + " passes). " + log_str
+            )
+
+        return None, "de4dot failed all strategies. " + " | ".join(logs)
 
     # ------------------------------------------------------------------
     # ILSpy invocation helper  (với xử lý ngoại lệ đầy đủ)

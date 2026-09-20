@@ -85,11 +85,13 @@ class FileAnalyzer:
     @classmethod
     def detect_protection(cls, file_path: str) -> Dict[str, Any]:
         """
-        Nhận diện chữ ký Packer / Obfuscator / Compiler:
-        - UPX Packer (.dll, .exe)
-        - ConfuserEx, Dotfuscator, Babel, Eazfuscator (.NET)
+        Nhan dien chu ky Packer / Obfuscator / Compiler:
+        - UPX Packer
+        - ConfuserEx, Eazfuscator, Dotfuscator, SmartAssembly, .NET Reactor,
+          Babel, Agile.NET, MaxToCode, Crypto Obfuscator, Obfuscar
         - ProGuard, DexGuard (Android APK)
         - PyInstaller, Nuitka (Python)
+        - Anti-Debug / Anti-Dump / Virtualization detection
         """
         protections_found: List[str] = []
         file_details: Dict[str, Any] = {}
@@ -99,53 +101,89 @@ class FileAnalyzer:
 
         try:
             with open(file_path, "rb") as f:
-                content = f.read(1024 * 1024)  # Đọc 1MB đầu để phân tích header
+                content = f.read(4 * 1024 * 1024)  # Doc 4MB de quet header
 
-            # 1. Phân tích PE (.dll, .exe)
+            # ── PE file (.dll, .exe) ──────────────────────────────────────
             if content.startswith(b"MZ"):
                 file_details["format"] = "PE (Portable Executable)"
-                # Kiểm tra chữ ký UPX
+
+                # UPX
                 if b"UPX0" in content or b"UPX1" in content or b"UPX!" in content:
                     protections_found.append("UPX Packer")
 
-                # Kiểm tra chữ ký Obfuscator phổ biến trong .NET
-                if b"ConfuserEx" in content or b"Confuser.Core" in content or b"ConfusedBy" in content:
-                    protections_found.append("ConfuserEx (.NET Obfuscator)")
-                if b"Dotfuscator" in content:
-                    protections_found.append("Dotfuscator (.NET)")
-                if b"Babel" in content:
-                    protections_found.append("Babel .NET Obfuscator")
-                if b"SmartAssembly" in content:
-                    protections_found.append("SmartAssembly (.NET)")
+                # .NET Obfuscators
+                _dotnet_sigs = [
+                    (b"ConfuserEx",         "ConfuserEx (.NET Obfuscator)"),
+                    (b"Confuser.Core",      "ConfuserEx (.NET Obfuscator)"),
+                    (b"ConfusedBy",         "ConfuserEx (.NET Obfuscator)"),
+                    (b"EazfuscatorNet",     "Eazfuscator.NET"),
+                    (b"Eazfuscator",        "Eazfuscator.NET"),
+                    (b"SmartAssembly.Attributes", "SmartAssembly (.NET)"),
+                    (b"Obfuscated by SA",   "SmartAssembly (.NET)"),
+                    (b"Dotfuscator",        "Dotfuscator (.NET)"),
+                    (b"BabelObfuscator",    "Babel .NET Obfuscator"),
+                    (b"Babel.Runtime",      "Babel .NET Obfuscator"),
+                    (b"CliSecure",          ".NET Reactor"),
+                    (b"Xenocode",           "Agile.NET / Xenocode"),
+                    (b"SecureTeam",         "Agile.NET / Xenocode"),
+                    (b"MaxToCode",          "MaxToCode"),
+                    (b"NETGuard",           "NETGuard"),
+                    (b"CryptoObfuscator",   "Crypto Obfuscator"),
+                    (b"Obfuscar",           "Obfuscar"),
+                    (b"SmartAssembly",      "SmartAssembly (.NET)"),
+                ]
+                found_names: List[str] = []
+                for sig_bytes, sig_name in _dotnet_sigs:
+                    if sig_bytes in content and sig_name not in found_names:
+                        found_names.append(sig_name)
+                        protections_found.append(sig_name)
 
-                # Đồng bộ kiểm tra .NET CLR Header từ FileDetector
+                # Anti-Debug / Anti-Dump / Virtualization
+                anti_features: List[str] = []
+                if b"CheckRemoteDebuggerPresent" in content or b"IsDebuggerPresent" in content:
+                    anti_features.append("Anti-Debug")
+                if b"anti_dump" in content or b"AntiDump" in content:
+                    anti_features.append("Anti-Dump")
+                if b"Virtualization" in content or b"virt_" in content:
+                    anti_features.append("Code Virtualization")
+                if anti_features:
+                    protections_found.append("Phat hien: " + " + ".join(anti_features))
+
+                # Kiem tra .NET CLR header
                 from core.detector import FileDetector
                 if FileDetector.is_dotnet_assembly(file_path):
                     file_details["runtime"] = ".NET Framework / .NET Core (C# Managed Code)"
-                    # Nếu có chuỗi làm rối nhưng chưa phát hiện Obfuscator cụ thể
-                    if not protections_found or "Không phát hiện" in protections_found[0]:
-                        protections_found = ["Phát hiện mã bị làm rối / mã hóa chuỗi (Obfuscated .NET)"]
+                    if not protections_found:
+                        protections_found.append(
+                            "Phat hien ma bi lam roi / ma hoa chuoi (Obfuscated .NET)"
+                        )
+                    # Chi ra so lop ma hoa
+                    layer_count = len([p for p in protections_found if "Obfuscator" in p or "Obfuscated" in p])
+                    if layer_count >= 2:
+                        file_details["obfuscation_layers"] = layer_count
+                        file_details["multi_layer"] = True
                 else:
                     file_details["runtime"] = "Native Windows (C/C++)"
 
-            # 2. Phân tích APK / JAR (Zip container)
+            # ── APK / JAR ─────────────────────────────────────────────────
             elif ext in [".apk", ".jar"] or content.startswith(b"PK\x03\x04"):
                 file_details["format"] = "Zip Container (APK/JAR)"
                 try:
                     with zipfile.ZipFile(file_path, "r") as zf:
                         namelist = zf.namelist()
                         file_details["total_files_in_archive"] = len(namelist)
-
                         if "classes.dex" in namelist:
                             file_details["runtime"] = "Android Dalvik/ART (DEX)"
-                        if any("proguard" in name.lower() for name in namelist):
+                        if any("proguard" in n.lower() for n in namelist):
                             protections_found.append("ProGuard Obfuscator")
-                        if any("secneo" in name.lower() or "bangcle" in name.lower() for name in namelist):
+                        if any("secneo" in n.lower() or "bangcle" in n.lower() for n in namelist):
                             protections_found.append("Commercial Android Reinforcement (Bangcle/Secneo)")
+                        if any("dexguard" in n.lower() for n in namelist):
+                            protections_found.append("DexGuard (Android)")
                 except Exception:
                     pass
 
-            # 3. Phân tích Python .pyc
+            # ── Python .pyc ───────────────────────────────────────────────
             elif ext == ".pyc":
                 file_details["format"] = "Python Bytecode (Compiled)"
                 if len(content) >= 16:
@@ -154,15 +192,16 @@ class FileAnalyzer:
                     file_details["runtime"] = "CPython"
 
         except Exception as e:
-            return {"error": f"Lỗi quét bảo vệ: {str(e)}"}
+            return {"error": "Loi quet bao ve: " + str(e)}
 
         if not protections_found:
-            protections_found.append("Không phát hiện Packer/Obfuscator phổ biến (Mã nguồn sạch)")
+            protections_found.append("Khong phat hien Packer/Obfuscator pho bien (Ma nguon sach)")
 
         return {
             "protections": protections_found,
             "details": file_details,
         }
+
 
     @classmethod
     def generate_full_report(cls, file_path: str, output_report_path: str = None) -> Dict[str, Any]:

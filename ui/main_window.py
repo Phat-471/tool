@@ -36,6 +36,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.selected_file_path = None
+        self.selected_folder_path = None
+        self.batch_selected_files = []
         self.current_worker = None
         self.recovered_files = {}
         self.current_zip_path = None
@@ -53,16 +55,22 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(12)
         main_layout.setContentsMargins(15, 15, 15, 15)
 
-        # 1. Khu vực chọn file (Hỗ trợ kéo thả hoặc bấm nút)
-        file_group = QGroupBox("📁 Tệp đầu vào (.dll, .apk, .pyc, .jar)")
+        # 1. Khu vực chọn file / thư mục (Hỗ trợ kéo thả hoặc bấm nút)
+        file_group = QGroupBox("📁 Đầu vào (.dll, .apk, .pyc, .jar hoặc cả thư mục cài đặt)")
         file_layout = QHBoxLayout(file_group)
 
         self.btn_select_file = QPushButton("📂 Chọn tệp...")
-        self.btn_select_file.setFixedWidth(120)
+        self.btn_select_file.setFixedWidth(110)
         self.btn_select_file.clicked.connect(self.choose_file)
         file_layout.addWidget(self.btn_select_file)
 
-        self.lbl_file_path = QLabel("Kéo thả file vào đây hoặc bấm 'Chọn tệp...'")
+        self.btn_select_folder = QPushButton("📁 Chọn thư mục...")
+        self.btn_select_folder.setFixedWidth(125)
+        self.btn_select_folder.setStyleSheet("font-weight: 500; color: #1D4ED8;")
+        self.btn_select_folder.clicked.connect(self.choose_folder)
+        file_layout.addWidget(self.btn_select_folder)
+
+        self.lbl_file_path = QLabel("Kéo thả file hoặc thư mục cài đặt vào đây, hoặc bấm 'Chọn tệp...' / 'Chọn thư mục...'")
         self.lbl_file_path.setStyleSheet("color: #64748B; font-style: italic;")
         file_layout.addWidget(self.lbl_file_path)
 
@@ -204,14 +212,17 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event):
         for url in event.mimeData().urls():
             file_path = url.toLocalFile()
-            if FileManager.is_supported(file_path):
+            if os.path.isdir(file_path):
+                self.handle_folder_selected(file_path)
+                break
+            elif FileManager.is_supported(file_path):
                 self.set_selected_file(file_path)
                 break
             else:
                 QMessageBox.warning(
                     self,
                     "Định dạng không hỗ trợ",
-                    f"Chỉ hỗ trợ các file: {', '.join(SUPPORTED_EXTENSIONS.keys())}"
+                    f"Chỉ hỗ trợ các file: {', '.join(SUPPORTED_EXTENSIONS.keys())} hoặc thư mục cài đặt."
                 )
 
     # ---------------------------------------------------------
@@ -223,8 +234,50 @@ class MainWindow(QMainWindow):
         if file_path:
             self.set_selected_file(file_path)
 
+    def choose_folder(self):
+        folder_path = QFileDialog.getExistingDirectory(self, "Chọn thư mục cài đặt ứng dụng cần dịch ngược")
+        if folder_path:
+            self.handle_folder_selected(folder_path)
+
+    def handle_folder_selected(self, folder_path: str):
+        """Xử lý khi người dùng chọn hoặc kéo thả một thư mục."""
+        from core.batch_scanner import SmartFolderScanner
+        from ui.batch_selection_dialog import BatchSelectionDialog
+
+        self._apply_status_style("info", f"🔍 Đang quét thư mục: {Path(folder_path).name}...")
+        scan_result = SmartFolderScanner.scan_directory(folder_path)
+
+        if scan_result.get("total_found", 0) == 0:
+            QMessageBox.information(
+                self,
+                "Không tìm thấy tệp",
+                f"Không tìm thấy tệp nhị phân nào (.dll, .exe, .apk, .pyc) trong thư mục:\n{folder_path}"
+            )
+            return
+
+        # Hiển thị hộp thoại xem trước và lọc thông minh
+        dialog = BatchSelectionDialog(scan_result, self)
+        if dialog.exec():
+            selected = dialog.selected_files
+            if not selected:
+                return
+
+            self.selected_file_path = None
+            self.selected_folder_path = folder_path
+            self.batch_selected_files = selected
+
+            target_count = len(selected)
+            folder_name = Path(folder_path).name
+            self.lbl_file_path.setText(
+                f"📁 Thư mục: <b>{folder_name}</b> ({target_count} tệp đã chọn để dịch ngược)"
+            )
+            self.lbl_file_path.setStyleSheet("color: #1D4ED8; font-weight: bold;")
+            self._apply_status_style("ok", f"✅ Đã chọn {target_count} tệp từ thư mục {folder_name}. Bấm 'Bắt đầu xử lý' để dịch.")
+
     def set_selected_file(self, file_path: str):
         self.selected_file_path = file_path
+        self.selected_folder_path = None
+        self.batch_selected_files = []
         info = FileManager.get_file_info(file_path)
         self.lbl_file_path.setText(
             f"<b>{info['filename']}</b> ({info['size_kb']} KB) - <i>{info['type_desc']}</i>"
@@ -232,13 +285,14 @@ class MainWindow(QMainWindow):
         self.lbl_file_path.setStyleSheet("color: #1E293B;")
 
     def start_processing(self):
-        if not self.selected_file_path:
-            QMessageBox.warning(self, "Chưa chọn file", "Vui lòng chọn một file (.dll, .apk, .pyc) để bắt đầu.")
+        if not self.selected_file_path and not self.batch_selected_files:
+            QMessageBox.warning(self, "Chưa chọn dữ liệu", "Vui lòng chọn một file (.dll, .apk, .pyc) hoặc một thư mục cài đặt để bắt đầu.")
             return
 
         # Vô hiệu hóa nút trong khi xử lý
         self.btn_start.setEnabled(False)
         self.btn_select_file.setEnabled(False)
+        self.btn_select_folder.setEnabled(False)
         self.file_tree.clear()
         self.code_viewer.clear()
         self.report_viewer.clear()
@@ -250,12 +304,20 @@ class MainWindow(QMainWindow):
             "export_zip": self.chk_zip.isChecked(),
         }
 
-        # Khởi tạo và chạy luồng ngầm
-        self.current_worker = DecompileWorker(self.selected_file_path, options)
+        if self.batch_selected_files and self.selected_folder_path:
+            # ── Chế độ Dịch ngược Hàng loạt Đa Luồng (Batch Mode) ──
+            from ui.batch_worker import BatchDecompileWorker
+            self.current_worker = BatchDecompileWorker(
+                self.selected_folder_path, self.batch_selected_files, options
+            )
+        else:
+            # ── Chế độ Dịch ngược 1 Tệp ──
+            self.current_worker = DecompileWorker(self.selected_file_path, options)
+
         self.current_worker.progress_updated.connect(self.on_progress)
         self.current_worker.process_finished.connect(self.on_finished)
         self.current_worker.error_occurred.connect(self.on_error)
-        self.current_worker.status_hint.connect(self.on_status_hint)   # ← mới
+        self.current_worker.status_hint.connect(self.on_status_hint)
         self.current_worker.start()
 
     # ---------------------------------------------------------
@@ -288,6 +350,7 @@ class MainWindow(QMainWindow):
     def on_finished(self, result: dict):
         self.btn_start.setEnabled(True)
         self.btn_select_file.setEnabled(True)
+        self.btn_select_folder.setEnabled(True)
         self.progress_bar.setValue(100)
 
         # Hiển thị báo cáo phân tích tĩnh (luôn hiển thị)
@@ -489,6 +552,7 @@ class MainWindow(QMainWindow):
         """Xử lý lỗi nghĩêm trọng từ worker (không hiện hộp thoại crash)."""
         self.btn_start.setEnabled(True)
         self.btn_select_file.setEnabled(True)
+        self.btn_select_folder.setEnabled(True)
         self.progress_bar.setValue(0)
         self._apply_status_style(
             "error",

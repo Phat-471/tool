@@ -210,10 +210,19 @@ class FileAnalyzer:
         protection_info = cls.detect_protection(file_path)
         strings_info = cls.extract_strings(file_path)
 
+        # Phân tích PE chuyên sâu (Entropy, Sections, CLR Header)
+        pe_analysis = {}
+        try:
+            from core.pe_inspector import PEInspector
+            pe_analysis = PEInspector.analyze_pe(file_path)
+        except Exception:
+            pass
+
         report = {
             "target_file": p.name,
             "file_size_kb": round(p.stat().st_size / 1024, 2),
             "protection_analysis": protection_info,
+            "pe_analysis": pe_analysis,
             "strings_analysis": {
                 "detected_urls_count": len(strings_info.get("urls", [])),
                 "detected_urls": strings_info.get("urls", []),

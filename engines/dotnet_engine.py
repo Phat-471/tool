@@ -383,9 +383,9 @@ class DotNetDecompiler(BaseDecompiler):
 
         # ── Section Headers ───────────────────────────────────────────
         sect_offset = opt_offset + opt_hdr_size
-        ln("\n── SECTION HEADERS ──")
-        ln(f"  {'Name':<10} {'VAddr':>10} {'VSize':>10} {'RawSize':>10} {'Chars':>12}")
-        ln("  " + "-" * 56)
+        ln("\n── SECTION HEADERS & ENTROPY ──")
+        ln(f"  {'Name':<10} {'VAddr':>10} {'VSize':>10} {'RawSize':>10} {'Entropy':>8}  {'Status':<16}")
+        ln("  " + "-" * 72)
 
         for i in range(num_sections):
             s = sect_offset + i * 40
@@ -396,9 +396,19 @@ class DotNetDecompiler(BaseDecompiler):
                 name = raw_name.decode("ascii", errors="replace")
             except Exception:
                 name = "???"
-            vsize, vaddr, raw_size = struct.unpack_from("<III", data, s + 8)[:3]
+            vsize, vaddr, raw_size, raw_ptr = struct.unpack_from("<IIII", data, s + 8)[:4]
             chars, = struct.unpack_from("<I", data, s + 36)
-            ln(f"  {name:<10} 0x{vaddr:08X} 0x{vsize:08X} 0x{raw_size:08X} 0x{chars:08X}")
+
+            # Tính entropy section
+            sec_data = data[raw_ptr:raw_ptr + raw_size] if raw_ptr + raw_size <= len(data) else b""
+            try:
+                from core.pe_inspector import PEInspector
+                sec_entropy = PEInspector.calculate_entropy(sec_data)
+            except Exception:
+                sec_entropy = 0.0
+
+            status = "⚠️ Packed/Encrypted" if sec_entropy >= 7.0 else "Normal"
+            ln(f"  {name:<10} 0x{vaddr:08X} 0x{vsize:08X} 0x{raw_size:08X} {sec_entropy:8.3f}  {status:<16}")
 
         # ── String Extraction (printable ASCII ≥ 6 ký tự) ────────────
         ln("\n── EXTRACTED STRINGS (ASCII ≥ 6 chars, max 200) ──")
@@ -491,11 +501,12 @@ class DotNetDecompiler(BaseDecompiler):
         ok, msg, stdout, stderr = self._run_ilspy(executable, input_path, out_path)
 
         if ok:
+            enh_msg = self._postprocess_code_enhancement(out_path)
             sln_msg = self._try_generate_solution(out_path)
             return {
                 "success": True,
                 "output_dir": str(out_path.resolve()),
-                "message": f"✅ Dịch ngược C# thành công – {msg}{sln_msg}",
+                "message": f"✅ Dịch ngược C# thành công – {msg}{enh_msg}{sln_msg}",
                 "stdout": stdout,
                 "stderr": "",
             }
@@ -513,6 +524,7 @@ class DotNetDecompiler(BaseDecompiler):
                 # Kiểm tra thêm: nếu có bất kỳ file .cs nào thì đã thành công dù exit code
                 cs_after_retry = list(out_path.rglob("*.cs"))
                 if ok2 or cs_after_retry:
+                    enh_msg = self._postprocess_code_enhancement(out_path)
                     sln_msg = self._try_generate_solution(out_path)
                     count = len(cs_after_retry)
                     partial_note = " (có một số lỗi nhỏ – không ảnh hưởng tổng thể)" if not ok2 else ""
@@ -521,7 +533,7 @@ class DotNetDecompiler(BaseDecompiler):
                         "output_dir": str(out_path.resolve()),
                         "message": (
                             f"✅ Đã tự động gỡ làm rối (de4dot) và dịch ngược thành công – "
-                            f"{count} tệp .cs{partial_note}{sln_msg}"
+                            f"{count} tệp .cs{partial_note}{enh_msg}{sln_msg}"
                         ),
                         "stdout": stdout2,
                         "stderr": "",
@@ -534,11 +546,12 @@ class DotNetDecompiler(BaseDecompiler):
         if is_bad_image:
             ok_dnspy, msg_dnspy = self._try_dnspy_cli(input_path, out_path)
             if ok_dnspy:
+                enh_msg = self._postprocess_code_enhancement(out_path)
                 sln_msg = self._try_generate_solution(out_path)
                 return {
                     "success": True,
                     "output_dir": str(out_path.resolve()),
-                    "message": f"{msg_dnspy}{sln_msg}",
+                    "message": f"{msg_dnspy}{enh_msg}{sln_msg}",
                     "stdout": "",
                     "stderr": "",
                 }
@@ -550,6 +563,27 @@ class DotNetDecompiler(BaseDecompiler):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _postprocess_code_enhancement(self, out_path: Path) -> str:
+        """Tự động giải mã chuỗi, trích xuất IOCs và chèn chú thích vào code C#."""
+        try:
+            from core.string_decryptor import StringDecryptor
+            inv = StringDecryptor.enhance_decompiled_directory(str(out_path))
+            decoded_count = inv.get("total_decoded_base64", 0) + inv.get("total_decoded_bytes", 0)
+            urls_count = len(inv.get("urls", []))
+            ips_count = len(inv.get("ips", []))
+            parts = []
+            if decoded_count > 0:
+                parts.append(f"giải mã {decoded_count} chuỗi")
+            if urls_count > 0:
+                parts.append(f"{urls_count} URLs")
+            if ips_count > 0:
+                parts.append(f"{ips_count} IPs")
+            if parts:
+                return f" ({', '.join(parts)})"
+        except Exception:
+            pass
+        return ""
 
     def _try_generate_solution(self, out_path: Path) -> str:
         """Tạo file .sln nếu có module SolutionGenerator."""

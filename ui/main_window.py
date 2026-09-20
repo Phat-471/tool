@@ -291,10 +291,9 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(100)
 
         # Hiển thị báo cáo phân tích tĩnh (luôn hiển thị)
-        analysis_report = result.get("analysis_report", {})
-        self.render_analysis_report(analysis_report)
-
         output_dir = result.get("output_dir", "")
+        analysis_report = result.get("analysis_report", {})
+        self.render_analysis_report(analysis_report, output_dir)
 
         if not result.get("success", False):
             # ── Không thành công ──
@@ -339,18 +338,20 @@ class MainWindow(QMainWindow):
         if output_dir:
             QTimer.singleShot(500, lambda: self.refresh_tree_from_disk(output_dir))
 
-    def render_analysis_report(self, report: dict):
-        """Hiển thị báo cáo phân tích tĩnh dạng HTML."""
+    def render_analysis_report(self, report: dict, output_dir: str = ""):
+        """Hiển thị báo cáo phân tích tĩnh dạng HTML, bao gồm PE Section Entropy và Chuỗi giải mã."""
         if not report:
             self.report_viewer.setHtml("<p><i>Không có dữ liệu phân tích tĩnh.</i></p>")
             return
 
+        import json
         target_file = report.get("target_file", "Unknown")
         size_kb = report.get("file_size_kb", 0)
         prot_info = report.get("protection_analysis", {})
         protections = prot_info.get("protections", ["Không phát hiện"])
         details = prot_info.get("details", {})
         strings_info = report.get("strings_analysis", {})
+        pe_analysis = report.get("pe_analysis", {})
 
         urls = strings_info.get("detected_urls", [])
         ips = strings_info.get("detected_ips", [])
@@ -358,18 +359,102 @@ class MainWindow(QMainWindow):
 
         prot_items = "".join(
             f'<li style="color: #DC2626; font-weight: bold;">{p}</li>'
-            if "Packer" in p or "Obfuscator" in p
+            if any(k in p for k in ("Packer", "Obfuscator", "Virtualization", "Anti-"))
             else f'<li style="color: #16A34A;">{p}</li>'
             for p in protections
         )
 
-        url_items = "".join(f"<li>{u}</li>" for u in urls[:20]) if urls else "<li><i>Không tìm thấy URL.</i></li>"
-        ip_items = "".join(f"<li><code>{ip}</code></li>" for ip in ips[:20]) if ips else "<li><i>Không tìm thấy IP.</i></li>"
+        url_items = "".join(f"<li><a href='{u}'>{u}</a></li>" for u in urls[:25]) if urls else "<li><i>Không tìm thấy URL.</i></li>"
+        ip_items = "".join(f"<li><code>{ip}</code></li>" for ip in ips[:25]) if ips else "<li><i>Không tìm thấy IP.</i></li>"
         samples_text = "\n".join(samples[:80])
 
+        # ── 1. Bảng PE Sections & Entropy ──
+        sections_html = ""
+        sections = pe_analysis.get("sections", [])
+        if sections:
+            overall_ent = pe_analysis.get("overall_entropy", 0.0)
+            ent_badge = (
+                '<span style="background:#FEE2E2;color:#DC2626;padding:2px 6px;border-radius:4px;font-weight:bold;">⚠️ Mã hóa / Nén (Packed)</span>'
+                if pe_analysis.get("has_high_entropy")
+                else '<span style="background:#DCFCE7;color:#15803D;padding:2px 6px;border-radius:4px;font-weight:bold;">Bình thường</span>'
+            )
+            rows = []
+            for sec in sections:
+                is_p = sec.get("is_packed", False)
+                bg = "#FEF2F2" if is_p else "#FFFFFF"
+                color = "#DC2626" if is_p else "#15803D"
+                rows.append(
+                    f"<tr style='background:{bg};'>"
+                    f"<td><b>{sec.get('name')}</b></td>"
+                    f"<td><code>{sec.get('virtual_address')}</code></td>"
+                    f"<td>{sec.get('virtual_size'):,} B</td>"
+                    f"<td>{sec.get('raw_size'):,} B</td>"
+                    f"<td><b>{sec.get('entropy'):.3f}</b></td>"
+                    f"<td style='color:{color};font-weight:bold;'>{sec.get('status')}</td>"
+                    f"</tr>"
+                )
+            sections_html = f"""
+            <h3>🔬 Phân tích Cấu trúc Section & Entropy (Độ hỗn loạn)</h3>
+            <p>Tổng Entropy tệp: <b>{overall_ent} / 8.0</b> &nbsp; {ent_badge}</p>
+            <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;border-color:#CBD5E1;font-size:12px;">
+                <tr style="background:#F1F5F9;text-align:left;">
+                    <th>Tên Section</th><th>Virtual Address</th><th>Virtual Size</th><th>Raw Size</th><th>Entropy</th><th>Trạng thái</th>
+                </tr>
+                {"".join(rows)}
+            </table>
+            """
+
+        # ── 2. Báo cáo Chuỗi đã giải mã từ strings_inventory.json ──
+        inventory_html = ""
+        if output_dir:
+            inv_file = Path(output_dir) / "strings_inventory.json"
+            if inv_file.is_file():
+                try:
+                    with open(inv_file, "r", encoding="utf-8") as f:
+                        inv = json.load(f)
+                    
+                    dec_b64 = inv.get("total_decoded_base64", 0)
+                    dec_bytes = inv.get("total_decoded_bytes", 0)
+                    total_dec = dec_b64 + dec_bytes
+                    samples_dec = inv.get("sample_decoded", [])
+                    reg_keys = inv.get("registry_keys", [])
+                    api_keys = inv.get("api_keys", [])
+
+                    dec_rows = []
+                    for item in samples_dec[:15]:
+                        dec_rows.append(
+                            f"<tr>"
+                            f"<td>Line {item.get('line')}</td>"
+                            f"<td><code>{item.get('raw')}</code></td>"
+                            f"<td style='color:#1D4ED8;font-weight:bold;'>{item.get('decoded')}</td>"
+                            f"</tr>"
+                        )
+
+                    dec_table = (
+                        f"<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;width:100%;border-color:#CBD5E1;font-size:12px;margin-top:8px;'>"
+                        f"<tr style='background:#F1F5F9;text-align:left;'><th>Dòng</th><th>Dữ liệu gốc (Cipher/Hex)</th><th>Chuỗi đã giải mã (Plaintext)</th></tr>"
+                        f"{''.join(dec_rows)}</table>"
+                        if dec_rows else "<p><i>Không có mẫu giải mã.</i></p>"
+                    )
+
+                    reg_html = "".join(f"<li><code>{k}</code></li>" for k in reg_keys[:10]) if reg_keys else "<li><i>Không có</i></li>"
+                    api_html = "".join(f"<li><code>{k}</code></li>" for k in api_keys[:10]) if api_keys else "<li><i>Không có</i></li>"
+
+                    inventory_html = f"""
+                    <h3>🔓 Chuỗi Đã Giải Mã & Chỉ Số IOCs Chuyên Sâu ({total_dec} chuỗi giải mã)</h3>
+                    <p>Hệ thống đã tự động quét và chèn chú thích giải mã trực tiếp vào các tệp <code>.cs</code>.</p>
+                    {dec_table}
+                    <p style="margin-top:10px;"><b>Khóa Windows Registry phát hiện:</b></p>
+                    <ul>{reg_html}</ul>
+                    <p><b>API Keys / Secrets phát hiện:</b></p>
+                    <ul>{api_html}</ul>
+                    """
+                except Exception:
+                    pass
+
         html = f"""
-        <div style="font-family: Segoe UI, sans-serif; color: #1E293B;">
-            <h2 style="color: #2563EB; margin-bottom: 5px;">📊 Báo cáo Phân tích Tệp</h2>
+        <div style="font-family: Segoe UI, sans-serif; color: #1E293B; line-height: 1.5;">
+            <h2 style="color: #2563EB; margin-bottom: 5px;">📊 Báo cáo Phân tích Chuyên Sâu</h2>
             <hr style="border: 0; border-top: 1px solid #CBD5E1; margin-bottom: 15px;">
 
             <h3>📁 Thông tin tệp</h3>
@@ -378,10 +463,15 @@ class MainWindow(QMainWindow):
                 <li><b>Kích thước:</b> {size_kb} KB</li>
                 <li><b>Định dạng nhận diện:</b> {details.get("format", "N/A")}</li>
                 <li><b>Môi trường Runtime:</b> {details.get("runtime", "N/A")}</li>
+                <li><b>Kiến trúc:</b> {pe_analysis.get("machine", "N/A")} ({'64-bit' if pe_analysis.get('is_64bit') else '32-bit'})</li>
             </ul>
 
             <h3>🛡️ Phát hiện Bảo vệ (Packer / Obfuscator)</h3>
             <ul>{prot_items}</ul>
+
+            {sections_html}
+
+            {inventory_html}
 
             <h3>🌐 Địa chỉ URL & IP phát hiện ({len(urls)} URLs, {len(ips)} IPs)</h3>
             <p><b>URLs:</b></p>
@@ -389,8 +479,8 @@ class MainWindow(QMainWindow):
             <p><b>IP Addresses:</b></p>
             <ul>{ip_items}</ul>
 
-            <h3>📝 Mẫu chuỗi ký tự trích xuất (Strings Preview)</h3>
-            <pre style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 10px; border-radius: 4px;">{samples_text}</pre>
+            <h3>📝 Mẫu chuỗi ký tự thô trích xuất (Strings Preview)</h3>
+            <pre style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 10px; border-radius: 4px; font-size: 11px; max-height: 250px; overflow-y: auto;">{samples_text}</pre>
         </div>
         """
         self.report_viewer.setHtml(html)

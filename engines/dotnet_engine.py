@@ -1,10 +1,11 @@
-import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional, Tuple
+
 from engines.base import BaseDecompiler
 from config import TOOLS_DIR
+
 
 class DotNetDecompiler(BaseDecompiler):
     """Engine dịch ngược .NET Assembly (.dll, .exe) sử dụng ILSpy CLI (ilspycmd) kết hợp de4dot."""
@@ -12,36 +13,142 @@ class DotNetDecompiler(BaseDecompiler):
     def __init__(self):
         super().__init__("ILSpy .NET Decompiler")
 
+    # ------------------------------------------------------------------
+    # Tool discovery
+    # ------------------------------------------------------------------
+
     def get_executable_path(self) -> Optional[str]:
-        # 1. Tìm trong thư mục tools/ của dự án
+        """Trả về đường dẫn tới ilspycmd, ưu tiên thư mục tools/ của dự án."""
         local_exe = TOOLS_DIR / "ilspycmd.exe"
         if local_exe.is_file():
             return str(local_exe.resolve())
-
-        # 2. Tìm trong PATH hệ thống
-        system_exe = shutil.which("ilspycmd")
-        if system_exe:
-            return system_exe
-
-        return None
+        return shutil.which("ilspycmd")
 
     def get_de4dot_executable(self) -> Optional[str]:
-        """Kiểm tra công cụ de4dot để gỡ làm rối code .NET."""
-        # 1. tools/de4dot/de4dot.exe
-        p1 = TOOLS_DIR / "de4dot" / "de4dot.exe"
-        if p1.is_file():
-            return str(p1.resolve())
-
-        # 2. tools/de4dot.exe
-        p2 = TOOLS_DIR / "de4dot.exe"
-        if p2.is_file():
-            return str(p2.resolve())
-
-        # 3. PATH
+        """Trả về đường dẫn tới de4dot, kiểm tra nhiều vị trí."""
+        for candidate in [
+            TOOLS_DIR / "de4dot" / "de4dot.exe",
+            TOOLS_DIR / "de4dot.exe",
+        ]:
+            if candidate.is_file():
+                return str(candidate.resolve())
         return shutil.which("de4dot")
 
     def is_available(self) -> bool:
         return self.get_executable_path() is not None
+
+    # ------------------------------------------------------------------
+    # Pre-processing: de4dot
+    # ------------------------------------------------------------------
+
+    def _preprocess_with_de4dot(
+        self, input_path: str, work_dir: Path
+    ) -> Tuple[Optional[str], str]:
+        """Chạy de4dot để gỡ làm rối file DLL trước khi dịch ngược.
+
+        Returns:
+            (cleaned_path, log_message)
+            - cleaned_path: đường dẫn file đã làm sạch, hoặc None nếu thất bại.
+            - log_message : mô tả kết quả.
+        """
+        de4dot_bin = self.get_de4dot_executable()
+        if not de4dot_bin:
+            return None, "⚠️ Không tìm thấy de4dot – bỏ qua bước gỡ làm rối."
+
+        stem = Path(input_path).stem
+        cleaned_file = work_dir / f"{stem}_cleaned.dll"
+
+        # Thử với --strtyp delegate trước (giải mã chuỗi động của ConfuserEx),
+        # sau đó thử lại không có tham số đặc biệt.
+        cmds_to_try = [
+            [de4dot_bin, input_path, "-o", str(cleaned_file), "--strtyp", "delegate"],
+            [de4dot_bin, input_path, "-o", str(cleaned_file)],
+        ]
+
+        for cmd in cmds_to_try:
+            try:
+                subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=180,
+                )
+                if cleaned_file.exists() and cleaned_file.stat().st_size > 0:
+                    return str(cleaned_file), (
+                        f"✅ de4dot xử lý thành công → {cleaned_file.name}"
+                    )
+            except subprocess.TimeoutExpired:
+                return None, "⚠️ de4dot quá thời gian (timeout 180s)."
+            except Exception as exc:
+                return None, f"⚠️ de4dot gặp lỗi: {exc}"
+
+        return None, "⚠️ de4dot không tạo được file đã làm sạch."
+
+    # ------------------------------------------------------------------
+    # ILSpy invocation helper
+    # ------------------------------------------------------------------
+
+    def _run_ilspy(
+        self, executable: str, target_path: str, out_path: Path
+    ) -> Tuple[bool, str, str, str]:
+        """Chạy ilspycmd và trả về (success, message, stdout, stderr)."""
+        cmd = [executable, "-p", "-o", str(out_path.resolve()), target_path]
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            return False, "Quá thời gian xử lý ILSpy (timeout 300s).", "", ""
+        except Exception as exc:
+            return False, f"Lỗi khi gọi ilspycmd: {exc}", "", ""
+
+        cs_files = list(out_path.rglob("*.cs"))
+        if result.returncode == 0 or cs_files:
+            return True, f"{len(cs_files)} tệp .cs được trích xuất.", result.stdout, ""
+
+        err_combined = (result.stderr or "") + (result.stdout or "")
+        return False, err_combined, result.stdout, result.stderr
+
+    # ------------------------------------------------------------------
+    # Fallback: trích xuất cấu trúc PE
+    # ------------------------------------------------------------------
+
+    def _fallback_pe_analysis(
+        self, input_path: str, output_dir: str, prev_stderr: str
+    ) -> Dict[str, Any]:
+        """Chuyển hướng sang NativePEEngine khi không thể dịch ngược .NET."""
+        try:
+            from engines.native_engine import NativePEEngine
+            NativePEEngine().decompile(input_path, output_dir)
+            return {
+                "success": True,
+                "output_dir": output_dir,
+                "message": (
+                    "⚠️ File gặp lỗi Metadata (BadImageFormatException). "
+                    "Hệ thống đã tự động chuyển hướng – trích xuất cấu trúc PE "
+                    "và ghi vào tệp 'pe_summary.txt'."
+                ),
+                "stdout": "",
+                "stderr": prev_stderr,
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "message": f"Lỗi phân tích PE fallback: {exc}",
+                "stdout": "",
+                "stderr": prev_stderr,
+            }
+
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
 
     def decompile(self, input_path: str, output_dir: str, **kwargs) -> Dict[str, Any]:
         executable = self.get_executable_path()
@@ -58,92 +165,63 @@ class DotNetDecompiler(BaseDecompiler):
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
-        # Bước 1: Thử dịch trực tiếp bằng ILSpy
-        cmd = [executable, "-p", "-o", str(out_path.resolve()), input_path]
+        # ── Bước 1: Thử dịch trực tiếp bằng ILSpy ────────────────────
+        ok, msg, stdout, stderr = self._run_ilspy(executable, input_path, out_path)
+
+        if ok:
+            sln_msg = self._try_generate_solution(out_path)
+            return {
+                "success": True,
+                "output_dir": str(out_path.resolve()),
+                "message": f"✅ Dịch ngược C# thành công – {msg}{sln_msg}",
+                "stdout": stdout,
+                "stderr": "",
+            }
+
+        err_text = msg  # stderr + stdout gộp lại từ _run_ilspy
+
+        # ── Bước 2: Nếu gặp lỗi Metadata / Obfuscated → dùng de4dot ──
+        needs_deobf = (
+            "BadImageFormatException" in err_text
+            or "Illegal tables" in err_text
+            or "compressed metadata" in err_text
+        )
+
+        if needs_deobf or not ok:
+            cleaned_path, de4dot_log = self._preprocess_with_de4dot(input_path, out_path)
+
+            if cleaned_path:
+                ok2, msg2, stdout2, _ = self._run_ilspy(executable, cleaned_path, out_path)
+                if ok2:
+                    sln_msg = self._try_generate_solution(out_path)
+                    return {
+                        "success": True,
+                        "output_dir": str(out_path.resolve()),
+                        "message": (
+                            f"✅ Đã tự động gỡ làm rối (de4dot) và dịch ngược thành công – "
+                            f"{msg2}{sln_msg}"
+                        ),
+                        "stdout": stdout2,
+                        "stderr": "",
+                    }
+                err_text += f"\n[de4dot] {de4dot_log}\n[ILSpy retry] {msg2}"
+            else:
+                err_text += f"\n[de4dot] {de4dot_log}"
+
+        # ── Bước 3: Fallback → phân tích cấu trúc PE ─────────────────
+        return self._fallback_pe_analysis(input_path, output_dir, err_text)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _try_generate_solution(self, out_path: Path) -> str:
+        """Tạo file .sln nếu có module SolutionGenerator."""
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=300,
-            )
-
-            # Kiểm tra xem có file .cs nào được sinh ra không
-            cs_files = list(out_path.rglob("*.cs"))
-            if result.returncode == 0 or cs_files:
-                from core.solution_generator import SolutionGenerator
-                sln_file = SolutionGenerator.generate_solution_for_directory(str(out_path))
-                sln_msg = f" (Đã tạo Solution: {Path(sln_file).name})" if sln_file else ""
-
-                return {
-                    "success": True,
-                    "output_dir": str(out_path.resolve()),
-                    "message": f"Dịch ngược C# thành công ({len(cs_files)} tệp){sln_msg}.",
-                    "stdout": result.stdout,
-                    "stderr": "",
-                }
-
-            err_text = (result.stderr or "") + (result.stdout or "")
-
-            # Bước 2: Nếu gặp lỗi Metadata (Obfuscated) -> Thử dùng de4dot gỡ làm rối chuyên sâu
-            if "BadImageFormatException" in err_text or "Illegal tables" in err_text or result.returncode != 0:
-                de4dot_bin = self.get_de4dot_executable()
-
-                if de4dot_bin:
-                    cleaned_file = out_path / f"{Path(input_path).stem}_cleaned.dll"
-                    try:
-                        # Thêm tham số --strtyp delegate để giải mã chuỗi động (Dynamic String Decryption)
-                        fix_cmd = [de4dot_bin, input_path, "-o", str(cleaned_file), "--strtyp", "delegate"]
-                        subprocess.run(fix_cmd, capture_output=True, text=True, timeout=180)
-
-                        if cleaned_file.exists() and cleaned_file.stat().st_size > 0:
-                            # Dịch lại file đã làm sạch
-                            retry_cmd = [executable, "-p", "-o", str(out_path.resolve()), str(cleaned_file)]
-                            retry_res = subprocess.run(retry_cmd, capture_output=True, text=True, timeout=300)
-
-                            cleaned_cs_files = list(out_path.rglob("*.cs"))
-                            if cleaned_cs_files:
-                                from core.solution_generator import SolutionGenerator
-                                sln_file = SolutionGenerator.generate_solution_for_directory(str(out_path))
-                                sln_msg = f" & Tạo file Solution ({Path(sln_file).name})" if sln_file else ""
-
-                                return {
-                                    "success": True,
-                                    "output_dir": str(out_path.resolve()),
-                                    "message": f"✅ Đã tự động gỡ làm rối bằng de4dot và dịch ngược thành công {len(cleaned_cs_files)} tệp mã nguồn C#{sln_msg}!",
-                                    "stdout": retry_res.stdout,
-                                    "stderr": "",
-                                }
-                    except Exception as e_deobf:
-                        err_text += f"\nLỗi de4dot: {str(e_deobf)}"
-
-                # Nếu không có de4dot hoặc cả 2 đều không xuất được file .cs
-                friendly_msg = (
-                    "⚠️ File .NET bị làm rối nặng hoặc lỗi Metadata:\n\n"
-                    f"Chi tiết: {err_text[:300]}...\n\n"
-                    "👉 Hãy kiểm tra tab 'Phân tích & Strings' để xem cấu trúc chuỗi và dữ liệu của file."
-                )
-                return {
-                    "success": False,
-                    "message": friendly_msg,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                }
-
-            return {
-                "success": False,
-                "message": f"Lỗi ilspycmd (Exit code {e.returncode}):\n{e.stderr or e.stdout}",
-                "stdout": e.stdout,
-                "stderr": e.stderr,
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "success": False,
-                "message": "Quá thời gian xử lý (Timeout > 300s).",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"Lỗi không xác định: {str(e)}",
-            }
+            from core.solution_generator import SolutionGenerator
+            sln_file = SolutionGenerator.generate_solution_for_directory(str(out_path))
+            if sln_file:
+                return f" (Đã tạo Solution: {Path(sln_file).name})"
+        except Exception:
+            pass
+        return ""

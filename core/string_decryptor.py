@@ -201,8 +201,12 @@ class StringDecryptor:
         if not dir_path.exists():
             return {"error": f"Thư mục không tồn tại: {output_dir}"}
 
-        cs_files = list(dir_path.rglob("*.cs"))
-        total_files = len(cs_files)
+        source_files = (
+            list(dir_path.rglob("*.cs"))
+            + list(dir_path.rglob("*.java"))
+            + list(dir_path.rglob("*.py"))
+        )
+        total_files = len(source_files)
 
         all_base64 = []
         all_bytes = []
@@ -213,8 +217,8 @@ class StringDecryptor:
         all_api_keys = set()
         modified_count = 0
 
-        for cs in cs_files:
-            file_res = cls.enhance_file(cs)
+        for sf in source_files:
+            file_res = cls.enhance_file(sf)
             if file_res["modified"]:
                 modified_count += 1
             all_base64.extend(file_res["decoded_base64"])
@@ -226,7 +230,7 @@ class StringDecryptor:
             all_api_keys.update(file_res["api_keys"])
 
         inventory = {
-            "total_cs_files": total_files,
+            "total_source_files": total_files,
             "modified_with_annotations": modified_count,
             "total_decoded_base64": len(all_base64),
             "total_decoded_bytes": len(all_bytes),

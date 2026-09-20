@@ -82,9 +82,21 @@ class FileDetector:
                 engine = "dotnet"
                 language = "csharp"
             else:
-                file_type = "Native Windows Binary (C/C++ Unmanaged)"
-                engine = "native"
-                language = "c"
+                # Kiểm tra xem có phải file đóng gói PyInstaller hay không
+                try:
+                    from core.pyinstaller_extractor import PyInstallerExtractor
+                    if PyInstallerExtractor.is_pyinstaller_exe(str(p)):
+                        file_type = "Python Executable (PyInstaller Packed)"
+                        engine = "python"
+                        language = "python"
+                    else:
+                        file_type = "Native Windows Binary (C/C++ Unmanaged)"
+                        engine = "native"
+                        language = "c"
+                except Exception:
+                    file_type = "Native Windows Binary (C/C++ Unmanaged)"
+                    engine = "native"
+                    language = "c"
 
         # 2. Tệp Android / Java (.apk, .jar)
         elif ext == ".apk":

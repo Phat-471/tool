@@ -102,10 +102,24 @@ class NativePEEngine(BaseDecompiler):
 
         pe.close()
 
+        # 4. Sinh file hợp ngữ disassembly.asm cho EntryPoint và các hàm Export
+        disasm_file = out_path / "disassembly.asm"
+        has_disasm = False
+        try:
+            from core.disassembler import NativeDisassembler
+            has_disasm = NativeDisassembler.generate_disassembly_file(input_path, disasm_file)
+        except Exception:
+            pass
+
+        disasm_msg = " + Hợp ngữ x86/x64 (disassembly.asm)" if has_disasm else ""
+
         return {
             "success": True,
             "output_dir": str(out_path.resolve()),
-            "message": f"Phân tích Native PE thành công ({exported_count} exports, {imported_dll_count} DLL phụ thuộc).",
+            "message": (
+                f"✅ Phân tích Native PE thành công ({exported_count} exports, "
+                f"{imported_dll_count} DLL phụ thuộc){disasm_msg}."
+            ),
             "stdout": "",
             "stderr": "",
         }

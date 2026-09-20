@@ -64,9 +64,78 @@ class PythonDecompiler(BaseDecompiler):
         out_path.mkdir(parents=True, exist_ok=True)
 
         input_file = Path(input_path)
-        output_file = out_path / f"{input_file.stem}_recovered.py"
-
         executable = self.get_executable_path()
+
+        # ── Trường hợp 1: Tệp .exe đóng gói bằng PyInstaller ──
+        if input_file.suffix.lower() == ".exe":
+            try:
+                from core.pyinstaller_extractor import PyInstallerExtractor
+                res = PyInstallerExtractor.extract(input_path, out_path)
+                if not res.get("success"):
+                    return {
+                        "success": False,
+                        "message": f"Không thể bóc tách PyInstaller: {res.get('message')}",
+                    }
+
+                pyc_files = res.get("extracted_files", [])
+                decompiled_count = 0
+
+                # Dịch ngược từng file .pyc sang .py
+                src_dir = out_path / "python_source"
+                src_dir.mkdir(parents=True, exist_ok=True)
+
+                for pyc in pyc_files:
+                    pyc_path = Path(pyc)
+                    out_py = src_dir / f"{pyc_path.stem}.py"
+                    decompile_ok = False
+
+                    # Thử pycdc
+                    if executable:
+                        try:
+                            with open(out_py, "w", encoding="utf-8") as f_out:
+                                subprocess.run(
+                                    [executable, str(pyc_path)],
+                                    stdout=f_out,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    timeout=60,
+                                )
+                            if out_py.exists() and out_py.stat().st_size > 0:
+                                decompile_ok = True
+                                decompiled_count += 1
+                        except Exception:
+                            pass
+
+                    # Fallback dùng module dis nếu pycdc không ra file
+                    if not decompile_ok:
+                        if self.decompile_with_dis_fallback(str(pyc_path), out_py):
+                            decompiled_count += 1
+
+                # Quét và giải mã chuỗi
+                try:
+                    from core.string_decryptor import StringDecryptor
+                    StringDecryptor.enhance_decompiled_directory(str(src_dir))
+                except Exception:
+                    pass
+
+                return {
+                    "success": True,
+                    "output_dir": str(out_path.resolve()),
+                    "message": (
+                        f"✅ Đã bóc tách {len(pyc_files)} tệp bytecode từ PyInstaller .exe, "
+                        f"dịch ngược thành công {decompiled_count} tệp .py vào thư mục python_source/."
+                    ),
+                    "stdout": "",
+                    "stderr": "",
+                }
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "message": f"Lỗi xử lý PyInstaller .exe: {exc}",
+                }
+
+        # ── Trường hợp 2: Tệp .pyc đơn lẻ ──
+        output_file = out_path / f"{input_file.stem}_recovered.py"
 
         # 1. Thử dùng pycdc CLI
         if executable:
@@ -80,10 +149,17 @@ class PythonDecompiler(BaseDecompiler):
                         check=True,
                         timeout=120,
                     )
+                # Quét chuỗi
+                try:
+                    from core.string_decryptor import StringDecryptor
+                    StringDecryptor.enhance_file(output_file)
+                except Exception:
+                    pass
+
                 return {
                     "success": True,
                     "output_dir": str(out_path.resolve()),
-                    "message": f"Dịch ngược bằng pycdc thành công: {output_file.name}",
+                    "message": f"✅ Dịch ngược bằng pycdc thành công: {output_file.name}",
                     "stdout": "",
                     "stderr": result.stderr or "",
                 }
@@ -95,7 +171,7 @@ class PythonDecompiler(BaseDecompiler):
             return {
                 "success": True,
                 "output_dir": str(out_path.resolve()),
-                "message": f"Đã phân tích cấu trúc bytecode thành công: {output_file.name}",
+                "message": f"✅ Đã phân tích cấu trúc bytecode thành công: {output_file.name}",
                 "stdout": "",
                 "stderr": "",
             }

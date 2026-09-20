@@ -43,7 +43,14 @@ class JavaDecompiler(BaseDecompiler):
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
-        cmd = [executable, "-d", str(out_path.resolve()), input_path]
+        cmd = [
+            executable,
+            "--deobf",
+            "--show-bad-code",
+            "--escape-unicode-strings",
+            "-d", str(out_path.resolve()),
+            input_path,
+        ]
 
         try:
             result = subprocess.run(
@@ -51,22 +58,63 @@ class JavaDecompiler(BaseDecompiler):
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                check=True,
+                errors="replace",
                 timeout=600,
             )
+
+            # Đếm số lượng file .java trích xuất được
+            java_files = list(out_path.rglob("*.java"))
+            if not java_files and result.returncode != 0:
+                return {
+                    "success": False,
+                    "message": f"Lỗi JADX (Exit code {result.returncode}): {result.stderr or result.stdout}",
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                }
+
+            # 1. Trích xuất AndroidManifest.xml & strings.xml nếu có
+            android_notes = self._extract_android_metadata(out_path)
+
+            # 2. Quét và giải mã chuỗi trên toàn bộ file .java
+            enh_msg = ""
+            try:
+                from core.string_decryptor import StringDecryptor
+                inv = StringDecryptor.enhance_decompiled_directory(str(out_path))
+                dec_count = inv.get("total_decoded_base64", 0) + inv.get("total_decoded_bytes", 0)
+                if dec_count > 0:
+                    enh_msg = f" (Đã giải mã {dec_count} chuỗi, {len(inv.get('urls', []))} URLs)"
+            except Exception:
+                pass
+
             return {
                 "success": True,
                 "output_dir": str(out_path.resolve()),
-                "message": "Dịch ngược APK/Java thành công.",
-                "stdout": result.stdout,
+                "message": (
+                    f"✅ Dịch ngược APK/Java thành công – "
+                    f"{len(java_files)} tệp .java (Chế độ deobfuscator đã bật){enh_msg}{android_notes}."
+                ),
+                "stdout": result.stdout or "",
                 "stderr": "",
             }
-        except subprocess.CalledProcessError as e:
-            return {
-                "success": False,
-                "message": f"Lỗi JADX (Exit code {e.returncode}): {e.stderr or e.stdout}",
-                "stdout": e.stdout,
-                "stderr": e.stderr,
-            }
+        except subprocess.TimeoutExpired:
+            return {"success": False, "message": "Quá thời gian thực thi JADX (>600s)."}
         except Exception as e:
             return {"success": False, "message": f"Lỗi thực thi JADX: {str(e)}"}
+
+    def _extract_android_metadata(self, out_path: Path) -> str:
+        """Trích xuất thông tin cơ bản từ AndroidManifest.xml và res/values/strings.xml."""
+        manifest_files = list(out_path.rglob("AndroidManifest.xml"))
+        notes = []
+        if manifest_files:
+            try:
+                manifest_text = manifest_files[0].read_text(encoding="utf-8", errors="replace")
+                import re
+                pkg_match = re.search(r'package\s*=\s*"([^"]+)"', manifest_text)
+                if pkg_match:
+                    notes.append(f"Package: {pkg_match.group(1)}")
+                perms = re.findall(r'uses-permission.*?android:name\s*=\s*"([^"]+)"', manifest_text)
+                if perms:
+                    notes.append(f"{len(perms)} quyền Android")
+            except Exception:
+                pass
+        return f" [{', '.join(notes)}]" if notes else ""

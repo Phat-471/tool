@@ -124,9 +124,12 @@ class BatchDecompileWorker(QThread):
         if self.options.get("export_zip", True) and aggregated_files:
             self.progress_updated.emit(98, "Đang nén toàn bộ không gian làm việc thành file ZIP...")
             zip_file = OUTPUT_DIR / f"{folder_name}_all_modules.zip"
-            FileManager.create_zip_archive(str(master_out), str(zip_file))
-            if zip_file.is_file():
-                zip_path = str(zip_file)
+            try:
+                FileManager.create_zip(str(master_out), str(zip_file))
+                if zip_file.is_file():
+                    zip_path = str(zip_file)
+            except Exception:
+                pass
 
         self.progress_updated.emit(100, f"Hoàn tất! Đã dịch {success_count}/{total_files} module.")
         self.status_hint.emit("ok", f"🎉 Hoàn tất dịch ngược hàng loạt! {success_count}/{total_files} tệp thành công.")

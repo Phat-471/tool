@@ -103,3 +103,5 @@ class FileManager:
                     zf.write(file_path, arcname)
 
         return output_zip_path
+
+    create_zip_archive = create_zip

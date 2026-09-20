@@ -272,7 +272,10 @@ class MainWindow(QMainWindow):
                 f"📁 Thư mục: <b>{folder_name}</b> ({target_count} tệp đã chọn để dịch ngược)"
             )
             self.lbl_file_path.setStyleSheet("color: #1D4ED8; font-weight: bold;")
-            self._apply_status_style("ok", f"✅ Đã chọn {target_count} tệp từ thư mục {folder_name}. Bấm 'Bắt đầu xử lý' để dịch.")
+            self._apply_status_style("info", f"🚀 Đang khởi chạy dịch ngược hàng loạt {target_count} tệp...")
+
+            # Tự động bắt đầu xử lý ngay lập tức (không bắt người dùng bấm thêm lần 2)
+            self.start_processing()
 
     def set_selected_file(self, file_path: str):
         self.selected_file_path = file_path

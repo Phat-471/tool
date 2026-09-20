@@ -144,10 +144,14 @@ class DotNetDecompiler(BaseDecompiler):
         stderr_text = result.stderr or ""
         err_combined = stderr_text + stdout_text
 
-        # Kiểm tra file .cs được tạo ra
+        # Kiểm tra file .cs được tạo ra — ưu tiên hơn exit code
         cs_files = list(out_path.rglob("*.cs"))
-        if (result.returncode == 0 or cs_files) and not self._is_bad_image_error(err_combined):
-            return True, f"{len(cs_files)} tệp .cs được trích xuất.", stdout_text, ""
+        has_cs = len(cs_files) > 0
+
+        # Thành công khi: có file .cs VÀ không có lỗi BadImage nặng
+        if has_cs and not self._is_bad_image_error(err_combined):
+            partial = " (có lỗi nhỏ)" if result.returncode != 0 else ""
+            return True, f"{len(cs_files)} tệp .cs được trích xuất{partial}.", stdout_text, stderr_text
 
         # Gắn tag [BAD_IMAGE] để caller nhận diện chính xác loại lỗi
         if self._is_bad_image_error(err_combined):
@@ -439,20 +443,25 @@ class DotNetDecompiler(BaseDecompiler):
         err_text = msg  # stderr + stdout gộp lại từ _run_ilspy
         is_bad_image = "[BAD_IMAGE]" in err_text or self._is_bad_image_error(err_text)
 
-        # ── Bước 2a: BadImageFormatException → thử de4dot trước ──────
+        # ── Bước 2a: BadImageFormatException / thất bại → thử de4dot trước ──
         if is_bad_image or not ok:
             cleaned_path, de4dot_log = self._preprocess_with_de4dot(input_path, out_path)
 
             if cleaned_path:
                 ok2, msg2, stdout2, _ = self._run_ilspy(executable, cleaned_path, out_path)
-                if ok2:
+
+                # Kiểm tra thêm: nếu có bất kỳ file .cs nào thì đã thành công dù exit code
+                cs_after_retry = list(out_path.rglob("*.cs"))
+                if ok2 or cs_after_retry:
                     sln_msg = self._try_generate_solution(out_path)
+                    count = len(cs_after_retry)
+                    partial_note = " (có một số lỗi nhỏ – không ảnh hưởng tổng thể)" if not ok2 else ""
                     return {
                         "success": True,
                         "output_dir": str(out_path.resolve()),
                         "message": (
                             f"✅ Đã tự động gỡ làm rối (de4dot) và dịch ngược thành công – "
-                            f"{msg2}{sln_msg}"
+                            f"{count} tệp .cs{partial_note}{sln_msg}"
                         ),
                         "stdout": stdout2,
                         "stderr": "",

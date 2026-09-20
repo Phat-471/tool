@@ -9,6 +9,9 @@ uploads/*
 output/*
 !output/.gitkeep
 
+# External large tools
+tools/jadx/
+
 # Operating System Files
 .DS_Store
 Thumbs.db

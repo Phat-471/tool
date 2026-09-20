@@ -1,0 +1,1 @@
+internal delegate int RcWWoqkhskXpS7JHkv2N(object P_0, string P_1, ref double P_2, ref double P_3, ref double P_4, ref string P_5, ref int P_6, ref int P_7, ref string[] P_8, ref string[] P_9, ref double[] P_10, ref double[] P_11, ref bool[] P_12, ref bool[] P_13, ref string[] P_14, ref string[] P_15);

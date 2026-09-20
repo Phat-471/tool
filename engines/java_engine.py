@@ -47,7 +47,6 @@ class JavaDecompiler(BaseDecompiler):
             executable,
             "--deobf",
             "--show-bad-code",
-            "--escape-unicode-strings",
             "-d", str(out_path.resolve()),
             input_path,
         ]

@@ -3,9 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Temporary uploads
+# Temporary uploads & outputs
 uploads/*
 !uploads/.gitkeep
+output/*
+!output/.gitkeep
 
 # Operating System Files
 .DS_Store

@@ -13,9 +13,10 @@ from config import OUTPUT_DIR
 class DecompileWorker(QThread):
     """Luồng xử lý ngầm (Worker Thread) cho quá trình dịch ngược, không làm đơ giao diện."""
 
-    progress_updated = pyqtSignal(int, str)
-    process_finished = pyqtSignal(dict)
-    error_occurred = pyqtSignal(str)
+    progress_updated = pyqtSignal(int, str)   # (percent, message)
+    process_finished = pyqtSignal(dict)        # kết quả cuối
+    error_occurred   = pyqtSignal(str)         # lỗi nghĩêm trọng dừng hẳn
+    status_hint      = pyqtSignal(str, str)    # (level, message)  level: 'info'|'warn'|'ok'|'error'
 
     def __init__(self, file_path: str, options: dict):
         super().__init__()
@@ -61,8 +62,65 @@ class DecompileWorker(QThread):
 
             if engine_name == "dotnet":
                 decompiler = DotNetDecompiler()
+
+                # ── Thử ILSpy lần 1 ────────────────────────────────
                 self.progress_updated.emit(60, "Đang chạy ILSpy CLI để trích xuất mã nguồn C#...")
+                self.status_hint.emit("info", "▶ ILSpy: Đang dịch ngược assembly...")
+
+                # Chạy ILSpy lần đầu (kiểm tra nhanh)
+                ok1, msg1, _, _ = decompiler._run_ilspy(
+                    decompiler.get_executable_path() or "",
+                    self.file_path,
+                    Path(specific_output_dir),
+                )
+
+                if not ok1 and ("[BAD_IMAGE]" in msg1 or decompiler._is_bad_image_error(msg1)):
+                    # ── Phát hiện BadImageFormatException ──
+                    self.progress_updated.emit(
+                        65,
+                        "⚠️ Phát hiện lỗi Metadata (BadImageFormatException). "
+                        "Đang tiến hành khôi phục..."
+                    )
+                    self.status_hint.emit(
+                        "warn",
+                        "⚠️ Phát hiện lỗi Metadata – Đang tiến hành khôi phục Metadata bằng de4dot..."
+                    )
+                    time.sleep(0.4)
+
+                    # ── de4dot ──
+                    self.progress_updated.emit(70, "Đang chạy de4dot để gỡ làm rối assembly...")
+                    self.status_hint.emit("info", "🔧 de4dot: Đang gỡ làm rối (Obfuscation removal)...")
+
+                    cleaned_path, de4dot_log = decompiler._preprocess_with_de4dot(
+                        self.file_path, Path(specific_output_dir)
+                    )
+
+                    if cleaned_path:
+                        self.status_hint.emit("ok", f"✅ de4dot: {de4dot_log}")
+                        self.progress_updated.emit(78, "Đang dịch ngược lại file đã làm sạch bằng ILSpy...")
+                        self.status_hint.emit("info", "▶ ILSpy: Đang dịch ngược lại file đã khử khuẩy...")
+                    else:
+                        self.status_hint.emit("warn", f"⚠️ de4dot: {de4dot_log}")
+                        self.progress_updated.emit(75, "Đang thử dnSpy CLI...")
+                        self.status_hint.emit("info", "🔄 dnSpy: Đang thử dịch ngược bằng dnSpy...")
+
+                # ── Gọi engine đầy đủ (bao gồm toàn bộ fallback chain) ──
                 res = decompiler.decompile(self.file_path, specific_output_dir)
+
+                # Sau khi hoàn tất: phân tích kết quả và gửi status_hint
+                if res.get("success"):
+                    msg_body = res.get("message", "")
+                    if "de4dot" in msg_body or "[BAD_IMAGE]" in res.get("stderr", ""):
+                        self.status_hint.emit("ok", "✅ Khôi phục Metadata thành công!")
+                    elif "pe_summary" in msg_body or "PE" in msg_body:
+                        self.status_hint.emit(
+                            "warn",
+                            "⚠️ Không dịch ngược được .NET – đã xuất báo cáo cấu trúc PE."
+                        )
+                    else:
+                        self.status_hint.emit("ok", "✅ ILSpy dịch ngược thành công!")
+                else:
+                    self.status_hint.emit("error", "❌ Không thể dịch ngược – xem chi tiết trong tab Phân tích.")
 
             elif engine_name == "java":
                 decompiler = JavaDecompiler()

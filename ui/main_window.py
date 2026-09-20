@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -255,34 +255,75 @@ class MainWindow(QMainWindow):
         self.current_worker.progress_updated.connect(self.on_progress)
         self.current_worker.process_finished.connect(self.on_finished)
         self.current_worker.error_occurred.connect(self.on_error)
+        self.current_worker.status_hint.connect(self.on_status_hint)   # ← mới
         self.current_worker.start()
+
+    # ---------------------------------------------------------
+    # Status bar helpers
+    # ---------------------------------------------------------
+    _STATUS_STYLES = {
+        "info":  "font-weight:500; color:#1D4ED8;",          # xanh dương
+        "warn":  "font-weight:600; color:#B45309; background:#FFFBEB; border-radius:4px; padding:2px 6px;",
+        "ok":    "font-weight:600; color:#15803D; background:#F0FDF4; border-radius:4px; padding:2px 6px;",
+        "error": "font-weight:600; color:#DC2626; background:#FEF2F2; border-radius:4px; padding:2px 6px;",
+    }
+
+    def _apply_status_style(self, level: str, text: str):
+        """Cập nhật nhãn trạng thái với màu sắc tương ứng."""
+        style = self._STATUS_STYLES.get(level, self._STATUS_STYLES["info"])
+        self.lbl_status.setStyleSheet(style)
+        self.lbl_status.setText(text)
+
+    # ---------------------------------------------------------
+    # Kết nối tín hiệu từ Worker
+    # ---------------------------------------------------------
+    def on_status_hint(self, level: str, message: str):
+        """Nhận tin hiệu trạng thái chi tiết từ luồng ngầm (không gây crash)."""
+        self._apply_status_style(level, message)
 
     def on_progress(self, percent: int, message: str):
         self.progress_bar.setValue(percent)
-        self.lbl_status.setText(f"Trạng thái: {message}")
+        self._apply_status_style("info", f"Trạng thái: {message}")
 
     def on_finished(self, result: dict):
         self.btn_start.setEnabled(True)
         self.btn_select_file.setEnabled(True)
         self.progress_bar.setValue(100)
 
-        # Hiển thị báo cáo phân tích tĩnh và chuỗi (luôn luôn hiển thị)
+        # Hiển thị báo cáo phân tích tĩnh (luôn hiển thị)
         analysis_report = result.get("analysis_report", {})
         self.render_analysis_report(analysis_report)
 
-        # Nếu decompiler không thể trích xuất được code gốc (ví dụ do Obfuscator / Native DLL)
+        output_dir = result.get("output_dir", "")
+
         if not result.get("success", False):
-            self.lbl_status.setText("Trạng thái: ⚠️ Không thể dịch ngược mã nguồn gốc.")
-            # Tự động chuyển sang tab Phân tích & Strings để người dùng xem dữ liệu tĩnh
-            self.tabs.setCurrentIndex(1)
-            QMessageBox.warning(
-                self,
-                "Thông báo dịch ngược",
-                result.get("error_message", "Có lỗi xảy ra trong quá trình dịch ngược.")
+            # ── Không thành công ──
+            err_msg = result.get("error_message", "Có lỗi xảy ra trong quá trình dịch ngược.")
+            self._apply_status_style(
+                "warn",
+                "⚠️ Không thể dịch ngược mã nguồn gốc. "
+                "Hệ thống đã xuất báo cáo phân tích tĩnh thay thế."
             )
+            # Chuyển sang tab Phân tích (không hiện hộp thoại crash)
+            self.tabs.setCurrentIndex(1)
+            # Vẫn cố làm tươi cây thư mục (pe_summary.txt, exports.h … có thể đã được tạo)
+            if output_dir:
+                QTimer.singleShot(300, lambda: self.refresh_tree_from_disk(output_dir))
             return
 
-        self.lbl_status.setText("Trạng thái: ✅ Đã hoàn tất khôi phục!")
+        # ── Thành công ──
+        decompile_msg = result.get("message", "")
+        if "BadImageFormatException" in decompile_msg or "PE" in decompile_msg:
+            self._apply_status_style(
+                "warn",
+                "⚠️ Khôi phục Metadata hoàn tất (chế độ PE). Xem báo cáo bên phải."
+            )
+        else:
+            self._apply_status_style(
+                "ok",
+                f"✅ Hoàn tất! Đã trích xuất {result.get('files_count', 0)} tệp mã nguồn."
+            )
+
         self.recovered_files = result.get("recovered_files", {})
         self.current_zip_path = result.get("zip_path")
 
@@ -294,11 +335,9 @@ class MainWindow(QMainWindow):
         self.search_widget.set_files(self.recovered_files)
         self.tabs.setCurrentIndex(0)
 
-        QMessageBox.information(
-            self,
-            "Thành công",
-            f"Đã trích xuất thành công {result['files_count']} tệp mã nguồn!\nThư mục: {result['output_dir']}"
-        )
+        # Tự động làm mới lại danh sách cây sau 500ms (để các file PE cũng xuất hiện)
+        if output_dir:
+            QTimer.singleShot(500, lambda: self.refresh_tree_from_disk(output_dir))
 
     def render_analysis_report(self, report: dict):
         """Hiển thị báo cáo phân tích tĩnh dạng HTML."""
@@ -357,18 +396,69 @@ class MainWindow(QMainWindow):
         self.report_viewer.setHtml(html)
 
     def on_error(self, err_msg: str):
+        """Xử lý lỗi nghĩêm trọng từ worker (không hiện hộp thoại crash)."""
         self.btn_start.setEnabled(True)
         self.btn_select_file.setEnabled(True)
         self.progress_bar.setValue(0)
-        self.lbl_status.setText("Trạng thái: ❌ Có lỗi xảy ra.")
-        QMessageBox.critical(self, "Lỗi xử lý", err_msg)
+        self._apply_status_style(
+            "error",
+            f"❌ Lỗi xử lý: {err_msg[:120]}{'...' if len(err_msg) > 120 else ''}"
+        )
+        # Ghi chi tiết lỗi vào tab Phân tích thay vì hiện hộp thoại
+        self.report_viewer.setHtml(
+            f"""
+            <div style="font-family:Segoe UI,sans-serif;color:#DC2626;padding:16px;">
+                <h3>❌ Lỗi xử lý</h3>
+                <pre style="background:#FEF2F2;border:1px solid #FECACA;
+                           padding:12px;border-radius:6px;color:#7F1D1D;
+                           white-space:pre-wrap;">{err_msg}</pre>
+            </div>
+            """
+        )
+        self.tabs.setCurrentIndex(1)
 
+    # ---------------------------------------------------------
+    # Cây thư mục
+    # ---------------------------------------------------------
     def populate_tree(self, files_dict: dict):
         self.file_tree.clear()
         self.lbl_tree.setText(f"📂 Cấu trúc ({len(files_dict)} tệp)")
         for rel_path, full_path in files_dict.items():
             item = QTreeWidgetItem(self.file_tree, [rel_path])
             item.setData(0, Qt.ItemDataRole.UserRole, full_path)
+
+    def refresh_tree_from_disk(self, output_dir: str):
+        """Quét lại thư mục output từ đĩa để cập nhật cây thư mục sau khi xử lý xong.
+
+        Được gọi tự động qua QTimer.singleShot sau khi on_finished chạy xong.
+        Hàm này không xóa cây cũ nếu không tìm thấy file mới, giữ nguyên nếu
+        có ít hơn số file hiện tại.
+        """
+        from core.file_manager import FileManager
+        out_path = Path(output_dir)
+        if not out_path.is_dir():
+            return
+
+        # Quét toàn bộ file trong output (bao gồm .txt, .h, .cs, .py …)
+        fresh_files: dict = {}
+        for f in sorted(out_path.rglob("*")):
+            if f.is_file():
+                rel = str(f.relative_to(out_path))
+                fresh_files[rel] = str(f)
+
+        if not fresh_files:
+            return
+
+        # Chỉ cập nhật khi có file mới hơn danh sách hiện tại
+        if len(fresh_files) > len(self.recovered_files):
+            self.recovered_files = fresh_files
+            self.populate_tree(fresh_files)
+            self.search_widget.set_files(fresh_files)
+            count = len(fresh_files)
+            self._apply_status_style(
+                "ok",
+                f"✅ Cây thư mục đã được làm mới – {count} tệp sẵn sàng."
+            )
 
     def filter_tree(self, text: str):
         """Lọc cây tệp theo từ khóa thời gian thực."""

@@ -117,8 +117,9 @@ class DotNetDecompiler(BaseDecompiler):
         best_size = 0
         pass_idx = 0
 
+        ext = Path(input_path).suffix or ".dll"
         for pass_idx, strategy in enumerate(strategies[:_MAX_DEOBF_PASSES], start=1):
-            cleaned_file = work_dir / (stem + "_pass" + str(pass_idx) + ".dll")
+            cleaned_file = work_dir / f"{stem}_pass{pass_idx}{ext}"
             cmd = [de4dot_bin, current_input, "-o", str(cleaned_file)] + strategy
             strat_label = " ".join(strategy) if strategy else "(generic)"
             logs.append("Pass " + str(pass_idx) + ": de4dot " + strat_label)
@@ -148,7 +149,7 @@ class DotNetDecompiler(BaseDecompiler):
                 logs.append("Pass " + str(pass_idx) + ": No output produced.")
 
         if best_cleaned:
-            final_path = work_dir / (stem + "_cleaned.dll")
+            final_path = work_dir / f"{stem}_cleaned{ext}"
             import shutil as _sh
             _sh.copy2(best_cleaned, str(final_path))
             log_str = " | ".join(logs)

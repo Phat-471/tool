@@ -90,8 +90,12 @@ class BatchSelectionDialog(QDialog):
 
             # Tên tệp
             name_text = item.get("rel_path", item.get("filename"))
+            if item.get("is_exe"):
+                name_text = f"🚀 {name_text} (EXE)"
             name_item = QTableWidgetItem(name_text)
-            if item.get("is_obfuscated"):
+            if item.get("is_exe"):
+                name_item.setForeground(Qt.GlobalColor.darkGreen)
+            elif item.get("is_obfuscated"):
                 name_item.setForeground(Qt.GlobalColor.red)
             elif not item.get("is_framework"):
                 name_item.setForeground(Qt.GlobalColor.darkBlue)

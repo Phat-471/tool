@@ -38,7 +38,7 @@ st.markdown(
 
 st.markdown('<div class="main-header">🔍 Hệ thống Hỗ trợ Khôi phục Mã nguồn</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-header">Công cụ hỗ trợ phân tích, trích xuất cấu trúc và phục hồi mã nguồn từ file thực thi và bytecode (.dll, .apk, .pyc).</div>',
+    '<div class="sub-header">Công cụ hỗ trợ phân tích, trích xuất cấu trúc và phục hồi mã nguồn từ file thực thi (.exe, .dll), ứng dụng Android (.apk) và Python bytecode (.pyc).</div>',
     unsafe_allow_html=True,
 )
 
@@ -59,6 +59,7 @@ with st.sidebar:
     st.markdown("### ℹ️ Thông tin hỗ trợ")
     st.markdown(
         """
+    - **.exe**: Windows Executable (.NET C#, PyInstaller, Native PE)
     - **.dll**: .NET Assemblies, C# Modules
     - **.apk**: Android Application Package
     - **.pyc**: Compiled Python Bytecode
@@ -74,7 +75,7 @@ def save_uploaded_file(uploaded_file, upload_dir="./uploads"):
     if uploaded_file is None:
         return {"status": False, "error": "Chưa có file nào được tải lên."}
 
-    allowed_extensions = {".dll", ".apk", ".pyc"}
+    allowed_extensions = {".dll", ".exe", ".apk", ".pyc"}
     filename = os.path.basename(uploaded_file.name)
     _, ext = os.path.splitext(filename)
     ext = ext.lower()
@@ -173,9 +174,9 @@ upload_col, info_col = st.columns([2, 1])
 
 with upload_col:
     uploaded_file = st.file_uploader(
-        "Tải lên file cần khôi phục (.dll, .apk, .pyc)",
-        type=["dll", "apk", "pyc"],
-        help="Hỗ trợ các định dạng file thực thi và bytecode phổ biến.",
+        "Tải lên file cần khôi phục (.dll, .exe, .apk, .pyc)",
+        type=["dll", "exe", "apk", "pyc"],
+        help="Hỗ trợ các định dạng file thực thi (.exe, .dll) và bytecode phổ biến.",
     )
 
 with info_col:
@@ -231,15 +232,39 @@ if uploaded_file is not None:
             st.write("⚡ **[Bước 3/4]** Đang tiến hành khôi phục mã nguồn...")
             file_ext = save_result["ext"]
 
-            if file_ext == ".dll":
-                output_folder = "./output_csharp"
-                res = decompile_dll_with_ilspy(save_result["path"], output_folder)
-                if not res["success"]:
-                    status_box.update(label="❌ Lỗi trong quá trình dịch ngược!", state="error", expanded=True)
-                    st.error(res["message"])
-                    st.stop()
-                decompile_success = True
-                progress_bar.progress(85)
+            if file_ext in [".dll", ".exe"]:
+                from core.detector import FileDetector
+                detection = FileDetector.detect(save_result["path"])
+                eng = detection.get("engine", "dotnet")
+
+                if eng == "dotnet":
+                    output_folder = "./output_csharp"
+                    res = decompile_dll_with_ilspy(save_result["path"], output_folder)
+                    if not res["success"]:
+                        status_box.update(label="❌ Lỗi trong quá trình dịch ngược!", state="error", expanded=True)
+                        st.error(res["message"])
+                        st.stop()
+                    decompile_success = True
+                    progress_bar.progress(85)
+                elif eng == "python":
+                    output_folder = "./output_python"
+                    from engines.python_engine import PythonDecompiler
+                    py_dec = PythonDecompiler()
+                    res = py_dec.decompile(save_result["path"], output_folder)
+                    decompile_success = res.get("success", False)
+                    progress_bar.progress(85)
+                elif eng == "native":
+                    output_folder = "./output_native"
+                    from engines.native_engine import NativePEEngine
+                    nat_dec = NativePEEngine()
+                    res = nat_dec.decompile(save_result["path"], output_folder)
+                    decompile_success = res.get("success", False)
+                    progress_bar.progress(85)
+                else:
+                    output_folder = "./output_csharp"
+                    res = decompile_dll_with_ilspy(save_result["path"], output_folder)
+                    decompile_success = res.get("success", False)
+                    progress_bar.progress(85)
             else:
                 # Mock cho các định dạng khác đang phát triển
                 time.sleep(1.0)
@@ -259,11 +284,12 @@ if uploaded_file is not None:
         # ---------------------------------------------------------
         res_col_nav, res_col_code = st.columns([1, 2])
 
-        # Đọc danh sách file thực tế nếu là .dll
-        if file_ext == ".dll" and os.path.exists(output_folder):
+        # Đọc danh sách file thực tế
+        valid_exts = (".cs", ".csproj", ".sln", ".py", ".asm", ".h", ".c", ".txt", ".json")
+        if os.path.exists(output_folder):
             for root, _, files in os.walk(output_folder):
                 for f in files:
-                    if f.endswith(".cs") or f.endswith(".csproj"):
+                    if f.endswith(valid_exts):
                         rel_path = os.path.relpath(os.path.join(root, f), output_folder)
                         recovered_files_map[rel_path] = os.path.join(root, f)
 

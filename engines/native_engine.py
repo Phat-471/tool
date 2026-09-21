@@ -81,14 +81,21 @@ class NativePEEngine(BaseDecompiler):
         # 3. Phân tích Header & Sections (pe_summary.txt)
         summary_file = out_path / "pe_summary.txt"
         arch = "x64 (64-bit)" if pe.FILE_HEADER.Machine == 0x8664 else "x86 (32-bit)" if pe.FILE_HEADER.Machine == 0x014c else f"0x{pe.FILE_HEADER.Machine:X}"
-        subsystem = pe.dump_dict().get("OPTIONAL_HEADER", {}).get("Subsystem", {}).get("Value", "Unknown")
+        subsystem_val = getattr(pe.OPTIONAL_HEADER, "Subsystem", 0) if hasattr(pe, "OPTIONAL_HEADER") else 0
+        subsystem_desc = (
+            "Windows GUI (Ứng dụng giao diện đồ họa)" if subsystem_val == 2
+            else "Windows Console CUI (Ứng dụng dòng lệnh)" if subsystem_val == 3
+            else f"Subsystem code: {subsystem_val}"
+        )
+        is_exe = Path(input_path).suffix.lower() == ".exe"
+        pe_type = "Windows Executable (.exe)" if is_exe else "Dynamic Link Library (.dll)"
 
         with open(summary_file, "w", encoding="utf-8") as f_sum:
             f_sum.write(f"TỔNG QUAN PHÂN TÍCH TỆP NATIVE - {Path(input_path).name}\n")
             f_sum.write("=" * 65 + "\n")
-            f_sum.write(f"- Loại tệp: Native Windows Binary (C/C++ Unmanaged)\n")
+            f_sum.write(f"- Định dạng: {pe_type}\n")
             f_sum.write(f"- Kiến trúc (Architecture): {arch}\n")
-            f_sum.write(f"- Subsystem: {subsystem}\n")
+            f_sum.write(f"- Subsystem: {subsystem_desc}\n")
             f_sum.write(f"- Số lượng hàm Export: {exported_count}\n")
             f_sum.write(f"- Số lượng DLL phụ thuộc: {imported_dll_count}\n\n")
 

@@ -46,9 +46,12 @@ class BatchDecompileWorker(QThread):
         module_out_dir = master_out_dir / f"{filename}_decompiled"
         module_out_dir.mkdir(parents=True, exist_ok=True)
 
-        try:
             if engine_name == "dotnet":
                 decompiler = DotNetDecompiler()
+                return decompiler.decompile(file_path, str(module_out_dir))
+            elif engine_name == "sfx":
+                from engines.sfx_engine import SFXDecompilerEngine
+                decompiler = SFXDecompilerEngine()
                 return decompiler.decompile(file_path, str(module_out_dir))
             elif engine_name == "java":
                 decompiler = JavaDecompiler()

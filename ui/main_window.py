@@ -56,7 +56,7 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(15, 15, 15, 15)
 
         # 1. Khu vực chọn file / thư mục (Hỗ trợ kéo thả hoặc bấm nút)
-        file_group = QGroupBox("📁 Đầu vào (.dll, .apk, .pyc, .jar hoặc cả thư mục cài đặt)")
+        file_group = QGroupBox("📁 Đầu vào (.dll, .exe, .apk, .pyc, .jar hoặc cả thư mục cài đặt)")
         file_layout = QHBoxLayout(file_group)
 
         self.btn_select_file = QPushButton("📂 Chọn tệp...")
@@ -229,7 +229,14 @@ class MainWindow(QMainWindow):
     # Các hàm tương tác
     # ---------------------------------------------------------
     def choose_file(self):
-        filter_str = "Hỗ trợ (*.dll *.apk *.pyc *.jar);;Tất cả (*.*)"
+        filter_str = (
+            "Tất cả định dạng hỗ trợ (*.dll *.exe *.apk *.pyc *.jar);;"
+            "File thực thi Windows (*.exe *.dll);;"
+            "Gói ứng dụng Android (*.apk);;"
+            "Python Bytecode (*.pyc);;"
+            "Java Archive (*.jar);;"
+            "Tất cả tệp (*.*)"
+        )
         file_path, _ = QFileDialog.getOpenFileName(self, "Chọn file cần khôi phục", "", filter_str)
         if file_path:
             self.set_selected_file(file_path)
@@ -596,14 +603,21 @@ class MainWindow(QMainWindow):
         if not out_path.is_dir():
             return
 
-        # Sắp xếp ưu tiên: mã nguồn (.java, .cs, .py, .xml) và thư mục sources/ lên đầu
-        # Các file ảnh (.png, .jpg, .webp) và nhị phân (.so, .arsc) xuống cuối
+        # Sắp xếp ưu tiên: mã nguồn (.java, .cs, .py, .xml, .lsp) và thư mục sources/ lên đầu
+        # Các file ảnh (.png, .jpg, .webp, .wmf) và nhị phân (.so, .arsc, .dll) xuống cuối
         def sort_priority(item_path: Path):
             rel = str(item_path.relative_to(out_path)).replace("\\", "/")
             ext = item_path.suffix.lower()
-            is_source_dir = rel.startswith("sources/")
-            is_code_ext = ext in (".java", ".cs", ".py", ".xml", ".json", ".h", ".txt", ".asm")
-            is_binary = ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".so", ".dex", ".arsc") or rel.endswith(".9.png")
+            is_source_dir = rel.startswith("sources/") or "_decompiled" in rel
+            is_code_ext = ext in (
+                ".java", ".cs", ".py", ".xml", ".json", ".h", ".txt", ".asm",
+                ".lsp", ".cui", ".cuix", ".ini", ".cfg", ".bat", ".cmd",
+                ".csproj", ".sln", ".config"
+            )
+            is_binary = ext in (
+                ".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".bmp", ".wmf",
+                ".so", ".dex", ".arsc", ".dll", ".exe", ".dwg", ".dxf", ".xls", ".xlsx", ".xlsm"
+            ) or rel.endswith(".9.png")
             if is_source_dir and is_code_ext:
                 prio = 0
             elif is_code_ext:
@@ -617,7 +631,7 @@ class MainWindow(QMainWindow):
         all_files = sorted([f for f in out_path.rglob("*") if f.is_file()], key=sort_priority)
         fresh_files: dict = {}
         for f in all_files:
-            rel = str(f.relative_to(out_path))
+            rel = str(f.relative_to(out_path)).replace("\\", "/")
             fresh_files[rel] = str(f)
 
         if not fresh_files:
@@ -637,7 +651,7 @@ class MainWindow(QMainWindow):
             for idx in range(self.file_tree.topLevelItemCount()):
                 item = self.file_tree.topLevelItem(idx)
                 txt = item.text(0).lower()
-                if txt.endswith((".java", ".cs", ".py")):
+                if txt.endswith((".java", ".cs", ".py", ".lsp", ".asm", ".h", ".c", ".txt")):
                     self.file_tree.setCurrentItem(item)
                     self.on_file_item_clicked(item, 0)
                     break
@@ -668,7 +682,22 @@ class MainWindow(QMainWindow):
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
             ext = Path(file_path).suffix.lower()
-            lang = "csharp" if ext in [".cs", ".csproj"] else "python" if ext == ".py" else "java"
+            if ext in [".cs", ".csproj", ".sln", ".config"]:
+                lang = "csharp"
+            elif ext == ".py":
+                lang = "python"
+            elif ext in [".asm"]:
+                lang = "asm"
+            elif ext in [".h", ".c", ".cpp"]:
+                lang = "c"
+            elif ext == ".java":
+                lang = "java"
+            elif ext in [".lsp", ".lisp"]:
+                lang = "lisp"
+            elif ext in [".xml", ".cui", ".cuix"]:
+                lang = "xml"
+            else:
+                lang = "csharp"
             self.code_viewer.set_code(content, lang)
             self.code_viewer.go_to_line(line_no)
         except Exception as e:
@@ -680,26 +709,61 @@ class MainWindow(QMainWindow):
             self.lbl_current_file.setText(f"💻 Mã nguồn: {item.text(0)}")
             ext = Path(full_path).suffix.lower()
             
-            # Kiểm tra nếu là file nhị phân / hình ảnh thì thông báo rõ ràng
-            binary_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".bmp", ".so", ".dex", ".arsc", ".bin"}
+            # Kiểm tra nếu là file nhị phân / hình ảnh / tài nguyên CAD
+            binary_exts = {
+                ".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".bmp", ".wmf",
+                ".so", ".dex", ".arsc", ".bin", ".dwg", ".dxf", ".xls", ".xlsx", ".xlsm"
+            }
             if ext in binary_exts or full_path.endswith(".9.png"):
                 self.code_viewer.set_code(
                     f"// =====================================================================\n"
-                    f"// 🖼️ Tệp tài nguyên / hình ảnh: {Path(full_path).name}\n"
+                    f"// 🖼️ Tệp tài nguyên / dữ liệu: {Path(full_path).name}\n"
                     f"// Đường dẫn: {item.text(0)}\n"
                     f"// =====================================================================\n\n"
-                    f"// Đây là tệp tài nguyên đồ họa (PNG/Image) trong bộ cài APK, không phải mã nguồn.\n"
-                    f"// 👉 Để xem mã nguồn Java:\n"
-                    f"// 1. Hãy bấm vào các tệp có đuôi .java trong thư mục 'sources\\'\n"
-                    f"// 2. Hoặc gõ '.java' vào ô '🔍 Lọc tệp theo tên...' ở góc trên bên trái.\n",
-                    "java"
+                    f"// Đây là tệp tài nguyên hoặc nhị phân (Ảnh, DWG CAD, bảng tính Excel...).\n"
+                    f"// 👉 Để xem mã nguồn:\n"
+                    f"// 1. Hãy bấm vào các tệp .cs trong thư mục '*_decompiled/' hoặc file kịch bản .lsp\n"
+                    f"// 2. Hoặc gõ '.cs' hoặc '.lsp' vào ô '🔍 Lọc tệp theo tên...' ở góc trên bên trái.\n",
+                    "csharp"
+                )
+                return
+
+            # Kiểm tra nếu là DLL/EXE trong danh sách tệp
+            if ext in {".dll", ".exe"}:
+                stem = Path(full_path).stem
+                self.code_viewer.set_code(
+                    f"// =====================================================================\n"
+                    f"// 📦 Module nhị phân: {Path(full_path).name}\n"
+                    f"// Đường dẫn: {item.text(0)}\n"
+                    f"// =====================================================================\n\n"
+                    f"// Tệp này là thư viện liên kết động (.dll) được bóc tách từ gói SFX.\n"
+                    f"// 👉 Mã nguồn C# đã được tự động dịch ngược sang thư mục:\n"
+                    f"//    '{stem}_decompiled/' (tìm trong danh sách tệp bên trái)\n"
+                    f"// 👉 Hoặc bạn có thể chọn trực tiếp file này để dịch ngược độc lập bằng nút 'Chọn tệp...'\n",
+                    "csharp"
                 )
                 return
 
             try:
                 with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
-                lang = "csharp" if ext in [".cs", ".csproj"] else "python" if ext == ".py" else "java"
+                ext = Path(full_path).suffix.lower()
+                if ext in [".cs", ".csproj", ".sln", ".config"]:
+                    lang = "csharp"
+                elif ext == ".py":
+                    lang = "python"
+                elif ext in [".asm"]:
+                    lang = "asm"
+                elif ext in [".h", ".c", ".cpp"]:
+                    lang = "c"
+                elif ext == ".java":
+                    lang = "java"
+                elif ext in [".lsp", ".lisp"]:
+                    lang = "lisp"
+                elif ext in [".xml", ".cui", ".cuix"]:
+                    lang = "xml"
+                else:
+                    lang = "csharp"
                 self.code_viewer.set_code(content, lang)
             except Exception as e:
                 self.code_viewer.set_code(f"// Không thể đọc file: {str(e)}")

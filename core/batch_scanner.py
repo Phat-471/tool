@@ -113,6 +113,11 @@ class SmartFolderScanner:
                         pass
 
                 is_framework = cls.is_framework_library(file)
+                is_exe = ext == ".exe"
+                is_uninstaller = file.lower().startswith("unins")
+
+                # Với file .exe: luôn ưu tiên trừ khi là file gỡ cài đặt unins
+                should_select = (not is_framework or is_obfuscated or is_exe) and not is_uninstaller
 
                 info = {
                     "path": str(file_path.resolve()),
@@ -124,16 +129,20 @@ class SmartFolderScanner:
                     "is_obfuscated": is_obfuscated,
                     "obf_name": obf_name,
                     "is_framework": is_framework,
-                    # Mặc định tick chọn nếu là file ứng dụng chính hoặc bị obfuscate
-                    "selected": not is_framework or is_obfuscated,
+                    "is_exe": is_exe,
+                    # Mặc định tick chọn nếu là file ứng dụng chính, file .exe hoặc bị obfuscate
+                    "selected": should_select,
                 }
 
-                if is_obfuscated or not is_framework:
+                if is_exe or is_obfuscated or not is_framework:
                     target_files.append(info)
                 elif is_framework:
                     framework_files.append(info)
                 else:
                     other_binaries.append(info)
+
+        # Sắp xếp ưu tiên các file .exe lên đầu danh sách target_files
+        target_files.sort(key=lambda x: (not x.get("is_exe", False), x.get("filename", "").lower()))
 
         return {
             "folder_path": str(p.resolve()),

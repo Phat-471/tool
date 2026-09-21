@@ -149,21 +149,55 @@ class FileAnalyzer:
                 if anti_features:
                     protections_found.append("Phat hien: " + " + ".join(anti_features))
 
+                # PyInstaller
+                try:
+                    from core.pyinstaller_extractor import PyInstallerExtractor
+                    if PyInstallerExtractor.is_pyinstaller_exe(file_path):
+                        protections_found.append("PyInstaller (Python Executable Bundle)")
+                        file_details["runtime"] = "Python (PyInstaller CArchive)"
+                except Exception:
+                    pass
+
+                # Inno Setup / NSIS
+                if b"Inno Setup Setup Data" in content:
+                    protections_found.append("Inno Setup Installer")
+                    file_details["runtime"] = "Inno Setup Self-Extracting Archive"
+                if b"NullsoftInst" in content:
+                    protections_found.append("NSIS Installer")
+                    file_details["runtime"] = "Nullsoft Scriptable Install System"
+
+                # Go / Rust runtime detection
+                if b"Go buildinf:" in content or b"/runtime/proc.go" in content:
+                    file_details["runtime"] = "Golang (Go Native Runtime)"
+                elif b"rust_panic" in content or b"library\\std\\src" in content:
+                    file_details["runtime"] = "Rust (Rust Native Runtime)"
+
                 # Kiem tra .NET CLR header
                 from core.detector import FileDetector
                 if FileDetector.is_dotnet_assembly(file_path):
                     file_details["runtime"] = ".NET Framework / .NET Core (C# Managed Code)"
-                    if not protections_found:
+                    if not any("Obfuscator" in p or "NET" in p for p in protections_found):
                         protections_found.append(
-                            "Phat hien ma bi lam roi / ma hoa chuoi (Obfuscated .NET)"
+                            "Phát hiện mã .NET quản lý (Managed Code)"
                         )
                     # Chi ra so lop ma hoa
                     layer_count = len([p for p in protections_found if "Obfuscator" in p or "Obfuscated" in p])
                     if layer_count >= 2:
                         file_details["obfuscation_layers"] = layer_count
                         file_details["multi_layer"] = True
-                else:
+                elif "runtime" not in file_details:
                     file_details["runtime"] = "Native Windows (C/C++)"
+
+                # Subsystem & EntryPoint RVA
+                try:
+                    import pefile
+                    pe = pefile.PE(file_path, fast_load=True)
+                    subsystem_val = getattr(pe.OPTIONAL_HEADER, "Subsystem", 0)
+                    file_details["subsystem"] = "Windows GUI" if subsystem_val == 2 else "Windows Console (CUI)" if subsystem_val == 3 else f"Subsystem {subsystem_val}"
+                    file_details["entry_point_rva"] = f"0x{pe.OPTIONAL_HEADER.AddressOfEntryPoint:08X}"
+                    pe.close()
+                except Exception:
+                    pass
 
             # ── APK / JAR ─────────────────────────────────────────────────
             elif ext in [".apk", ".jar"] or content.startswith(b"PK\x03\x04"):

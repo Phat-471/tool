@@ -12,6 +12,10 @@ output/*
 # External large tools
 tools/jadx/
 
+# PyInstaller build artifacts
+build/
+dist/
+
 # Operating System Files
 .DS_Store
 Thumbs.db

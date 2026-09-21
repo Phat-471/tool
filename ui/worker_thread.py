@@ -122,6 +122,17 @@ class DecompileWorker(QThread):
                 else:
                     self.status_hint.emit("error", "❌ Không thể dịch ngược – xem chi tiết trong tab Phân tích.")
 
+            elif engine_name == "sfx":
+                from engines.sfx_engine import SFXDecompilerEngine
+                decompiler = SFXDecompilerEngine()
+                self.progress_updated.emit(55, f"Phát hiện {detection['file_type']}. Đang bóc tách dữ liệu payload...")
+                self.status_hint.emit("info", "📦 SFX Engine: Đang giải nén kho lưu trữ nhúng và dịch ngược module .NET...")
+                res = decompiler.decompile(self.file_path, specific_output_dir)
+                if res.get("success"):
+                    self.status_hint.emit("ok", res.get("message", "✅ Đã giải nén và khôi phục thành công!"))
+                else:
+                    self.status_hint.emit("error", res.get("message", "❌ Không thể giải nén SFX."))
+
             elif engine_name == "java":
                 decompiler = JavaDecompiler()
                 self.progress_updated.emit(50, "Đang chạy JADX CLI để trích xuất mã nguồn Java...")

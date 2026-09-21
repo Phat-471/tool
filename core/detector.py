@@ -77,26 +77,74 @@ class FileDetector:
 
         # 1. Tệp Windows PE (.dll, .exe)
         if ext in [".dll", ".exe"] or header.startswith(b"MZ"):
+            is_exe = ext == ".exe"
+
+            # 1.0 Kiểm tra tệp thực thi tự giải nén (SFX Archive: WinRAR, 7-Zip, Zip SFX)
+            if is_exe:
+                try:
+                    from core.sfx_extractor import SFXExtractor
+                    is_sfx, sfx_desc, _ = SFXExtractor.detect_sfx(str(p))
+                    if is_sfx:
+                        return {
+                            "file_type": sfx_desc,
+                            "engine": "sfx",
+                            "language": "csharp",
+                            "filename": p.name,
+                            "path": str(p.resolve()),
+                        }
+                except Exception:
+                    pass
+
             if cls.is_dotnet_assembly(str(p)):
-                file_type = ".NET Assembly (C# Managed Code)"
+                file_type = ".NET Executable (C# Managed Exe)" if is_exe else ".NET Assembly (C# Managed DLL)"
                 engine = "dotnet"
                 language = "csharp"
             else:
                 # Kiểm tra xem có phải file đóng gói PyInstaller hay không
+                is_py = False
                 try:
                     from core.pyinstaller_extractor import PyInstallerExtractor
                     if PyInstallerExtractor.is_pyinstaller_exe(str(p)):
                         file_type = "Python Executable (PyInstaller Packed)"
                         engine = "python"
                         language = "python"
-                    else:
+                        is_py = True
+                except Exception:
+                    pass
+
+                if not is_py:
+                    # Kiểm tra dấu hiệu các trình biên dịch & đóng gói Native phổ biến
+                    try:
+                        with open(p, "rb") as f_pe:
+                            sample = f_pe.read(4 * 1024 * 1024)
+                        if b"Go buildinf:" in sample or b"/runtime/proc.go" in sample:
+                            file_type = "Go Native Executable (Golang Binary)"
+                            engine = "native"
+                            language = "c"
+                        elif b"rust_panic" in sample or b"library\\std\\src" in sample:
+                            file_type = "Rust Native Executable (Rust Binary)"
+                            engine = "native"
+                            language = "c"
+                        elif b"Inno Setup Setup Data" in sample:
+                            file_type = "Inno Setup Installer (.exe)"
+                            engine = "native"
+                            language = "c"
+                        elif b"NullsoftInst" in sample:
+                            file_type = "NSIS Installer (.exe)"
+                            engine = "native"
+                            language = "c"
+                        elif b"AU3!EA06" in sample or b"AutoIt" in sample:
+                            file_type = "AutoIt Compiled Script (.exe)"
+                            engine = "native"
+                            language = "c"
+                        else:
+                            file_type = "Native Windows Executable (C/C++ PE)" if is_exe else "Native Windows Library (C/C++ DLL)"
+                            engine = "native"
+                            language = "c"
+                    except Exception:
                         file_type = "Native Windows Binary (C/C++ Unmanaged)"
                         engine = "native"
                         language = "c"
-                except Exception:
-                    file_type = "Native Windows Binary (C/C++ Unmanaged)"
-                    engine = "native"
-                    language = "c"
 
         # 2. Tệp Android / Java (.apk, .jar)
         elif ext == ".apk":

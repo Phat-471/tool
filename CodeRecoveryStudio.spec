@@ -46,6 +46,7 @@ hidden_imports = [
     "ui.batch_worker",
     "ui.batch_selection_dialog",
     "ui.search_widget",
+    "ui.dll_manager_widget",
     "config",
     "zlib",
     "struct",

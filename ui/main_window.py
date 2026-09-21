@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
+    QTabBar,
     QTabWidget,
     QTextEdit,
     QTreeWidget,
@@ -28,6 +29,7 @@ from core.detector import FileDetector
 from ui.code_viewer import CodeViewerWidget
 from ui.worker_thread import DecompileWorker
 from ui.search_widget import GlobalSearchWidget
+from ui.dll_manager_widget import DLLManagerWidget
 from config import SUPPORTED_EXTENSIONS
 
 class MainWindow(QMainWindow):
@@ -41,6 +43,8 @@ class MainWindow(QMainWindow):
         self.current_worker = None
         self.recovered_files = {}
         self.current_zip_path = None
+        self.current_output_dir = None
+        self.category_keys = ["all", "csharp", "cad", "config", "dll", "media"]
 
         self.init_ui()
 
@@ -142,9 +146,42 @@ class MainWindow(QMainWindow):
         tree_container = QWidget()
         tree_layout = QVBoxLayout(tree_container)
         tree_layout.setContentsMargins(0, 0, 0, 0)
+        tree_layout.setSpacing(6)
+
         self.lbl_tree = QLabel("📂 Cấu trúc mã nguồn")
         self.lbl_tree.setStyleSheet("font-weight: bold;")
         tree_layout.addWidget(self.lbl_tree)
+
+        # Thanh phân loại danh mục tệp nhanh (Category Tabs)
+        self.category_tabs = QTabBar()
+        self.category_tabs.setExpanding(False)
+        self.category_tabs.setStyleSheet("""
+            QTabBar::tab {
+                background: #F1F5F9;
+                color: #475569;
+                padding: 4px 7px;
+                border-radius: 4px;
+                font-size: 11px;
+                margin-right: 3px;
+                margin-bottom: 2px;
+            }
+            QTabBar::tab:selected {
+                background: #2563EB;
+                color: #FFFFFF;
+                font-weight: bold;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #E2E8F0;
+            }
+        """)
+        self.category_tabs.addTab("📌 Tất cả")
+        self.category_tabs.addTab("💻 C#")
+        self.category_tabs.addTab("📐 CAD/LISP")
+        self.category_tabs.addTab("⚙️ Data")
+        self.category_tabs.addTab("📦 DLL")
+        self.category_tabs.addTab("🖼️ Media")
+        self.category_tabs.currentChanged.connect(self.on_category_changed)
+        tree_layout.addWidget(self.category_tabs)
 
         # Ô lọc nhanh cây file
         self.txt_tree_filter = QLineEdit()
@@ -182,7 +219,13 @@ class MainWindow(QMainWindow):
         code_layout.addWidget(self.code_viewer)
         self.tabs.addTab(tab_code, "💻 Mã nguồn")
 
-        # Tab 2: Báo cáo phân tích bảo vệ & Strings
+        # Tab 2: Quản lý Module DLL
+        self.dll_manager = DLLManagerWidget()
+        self.dll_manager.decompile_requested.connect(self.on_dll_decompile_requested)
+        self.dll_manager.open_source_requested.connect(self.on_open_decompiled_source)
+        self.tabs.addTab(self.dll_manager, "📦 Quản lý Module DLL")
+
+        # Tab 3: Báo cáo phân tích bảo vệ & Strings
         tab_report = QWidget()
         report_layout = QVBoxLayout(tab_report)
         report_layout.setContentsMargins(5, 5, 5, 5)
@@ -193,13 +236,13 @@ class MainWindow(QMainWindow):
         report_layout.addWidget(self.report_viewer)
         self.tabs.addTab(tab_report, "📊 Phân tích & Strings")
 
-        # Tab 3: Tìm kiếm toàn cục trong code
+        # Tab 4: Tìm kiếm toàn cục trong code
         self.search_widget = GlobalSearchWidget()
         self.search_widget.navigate_to_code.connect(self.on_search_navigation)
         self.tabs.addTab(self.search_widget, "🔍 Tìm kiếm trong code")
 
         splitter.addWidget(self.tabs)
-        splitter.setSizes([300, 800])
+        splitter.setSizes([340, 760])
         main_layout.addWidget(splitter, stretch=1)
 
     # ---------------------------------------------------------
@@ -398,9 +441,11 @@ class MainWindow(QMainWindow):
 
         self.recovered_files = result.get("recovered_files", {})
         self.current_zip_path = result.get("zip_path")
+        self.current_output_dir = result.get("output_dir")
 
-        if self.current_zip_path:
+        if self.current_output_dir:
             self.btn_export_zip.setEnabled(True)
+            self.dll_manager.set_output_directory(self.current_output_dir)
 
         # Xây dựng cây thư mục trên giao diện
         self.populate_tree(self.recovered_files)
@@ -582,23 +627,103 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentIndex(1)
 
     # ---------------------------------------------------------
-    # Cây thư mục
+    # Cây thư mục & Phân loại Danh mục
     # ---------------------------------------------------------
     def populate_tree(self, files_dict: dict):
         self.file_tree.clear()
         self.lbl_tree.setText(f"📂 Cấu trúc ({len(files_dict)} tệp)")
+
+        # Thống kê số lượng theo từng danh mục
+        counts = {
+            "all": len(files_dict),
+            "csharp": 0,
+            "cad": 0,
+            "config": 0,
+            "dll": 0,
+            "media": 0,
+        }
+
+        cad_exts = {".lsp", ".fas", ".vlx", ".dcl", ".cui", ".cuix", ".mns", ".mnu", ".dwg", ".dxf"}
+        config_exts = {".ini", ".cfg", ".conf", ".yaml", ".yml", ".properties", ".xml", ".json", ".xlsx", ".xls", ".xlsm", ".txt"}
+        media_exts = {".png", ".jpg", ".jpeg", ".ico", ".bmp", ".wmf", ".gif"}
+
         for rel_path, full_path in files_dict.items():
+            ext = Path(rel_path).suffix.lower()
+            if ext in (".cs", ".csproj", ".sln"):
+                counts["csharp"] += 1
+            elif ext in cad_exts:
+                counts["cad"] += 1
+            elif ext in config_exts and not rel_path.endswith((".cs", ".java", ".py")):
+                counts["config"] += 1
+            elif ext in (".dll", ".exe", ".ocx"):
+                counts["dll"] += 1
+            elif ext in media_exts:
+                counts["media"] += 1
+
             item = QTreeWidgetItem(self.file_tree, [rel_path])
             item.setData(0, Qt.ItemDataRole.UserRole, full_path)
 
-    def refresh_tree_from_disk(self, output_dir: str):
-        """Quét lại thư mục output từ đĩa để cập nhật cây thư mục sau khi xử lý xong.
+        # Cập nhật số lượng trên các tab danh mục
+        self.category_tabs.setTabText(0, f"📌 Tất cả ({counts['all']})")
+        self.category_tabs.setTabText(1, f"💻 C# ({counts['csharp']})")
+        self.category_tabs.setTabText(2, f"📐 CAD ({counts['cad']})")
+        self.category_tabs.setTabText(3, f"⚙️ Data ({counts['config']})")
+        self.category_tabs.setTabText(4, f"📦 DLL ({counts['dll']})")
+        self.category_tabs.setTabText(5, f"🖼️ Media ({counts['media']})")
 
-        Được gọi tự động qua QTimer.singleShot sau khi on_finished chạy xong.
-        Hàm này không xóa cây cũ nếu không tìm thấy file mới, giữ nguyên nếu
-        có ít hơn số file hiện tại.
-        """
-        from core.file_manager import FileManager
+        # Áp dụng bộ lọc hiện tại
+        self.filter_tree(self.txt_tree_filter.text())
+
+    def on_category_changed(self, index: int):
+        """Khi người dùng chuyển tab danh mục tệp -> Lọc lại cây tệp."""
+        self.filter_tree(self.txt_tree_filter.text())
+
+    def filter_tree(self, text: str = ""):
+        """Lọc cây tệp kết hợp Danh mục (Category Tab) và Từ khóa tìm kiếm."""
+        query = text.strip().lower()
+        active_tab_idx = self.category_tabs.currentIndex()
+        cat_key = self.category_keys[active_tab_idx] if 0 <= active_tab_idx < len(self.category_keys) else "all"
+
+        cad_exts = {".lsp", ".fas", ".vlx", ".dcl", ".cui", ".cuix", ".mns", ".mnu", ".dwg", ".dxf"}
+        config_exts = {".ini", ".cfg", ".conf", ".yaml", ".yml", ".properties", ".xml", ".json", ".xlsx", ".xls", ".xlsm", ".txt"}
+        media_exts = {".png", ".jpg", ".jpeg", ".ico", ".bmp", ".wmf", ".gif"}
+
+        root = self.file_tree.invisibleRootItem()
+        visible_count = 0
+        for i in range(root.childCount()):
+            item = root.child(i)
+            rel_name = item.text(0)
+            ext = Path(rel_name).suffix.lower()
+
+            # 1. Kiểm tra danh mục
+            match_cat = True
+            if cat_key == "csharp":
+                match_cat = ext in (".cs", ".csproj", ".sln")
+            elif cat_key == "cad":
+                match_cat = ext in cad_exts
+            elif cat_key == "config":
+                match_cat = ext in config_exts and ext not in (".cs", ".java", ".py")
+            elif cat_key == "dll":
+                match_cat = ext in (".dll", ".exe", ".ocx")
+            elif cat_key == "media":
+                match_cat = ext in media_exts
+
+            # 2. Kiểm tra từ khóa tìm kiếm
+            match_query = not query or query in rel_name.lower()
+
+            visible = match_cat and match_query
+            item.setHidden(not visible)
+            if visible:
+                visible_count += 1
+
+        self.lbl_tree.setText(f"📂 Cấu trúc ({visible_count}/{len(self.recovered_files)} tệp)")
+
+    def refresh_tree_from_disk(self, output_dir: str):
+        """Quét lại thư mục output từ đĩa để cập nhật cây thư mục sau khi xử lý xong."""
+        self.current_output_dir = output_dir
+        if hasattr(self, "dll_manager"):
+            self.dll_manager.set_output_directory(output_dir)
+
         out_path = Path(output_dir)
         if not out_path.is_dir():
             return
@@ -655,19 +780,6 @@ class MainWindow(QMainWindow):
                     self.file_tree.setCurrentItem(item)
                     self.on_file_item_clicked(item, 0)
                     break
-
-    def filter_tree(self, text: str):
-        """Lọc cây tệp theo từ khóa thời gian thực."""
-        query = text.strip().lower()
-        root = self.file_tree.invisibleRootItem()
-        visible_count = 0
-        for i in range(root.childCount()):
-            item = root.child(i)
-            match = not query or query in item.text(0).lower()
-            item.setHidden(not match)
-            if match:
-                visible_count += 1
-        self.lbl_tree.setText(f"📂 Cấu trúc ({visible_count}/{len(self.recovered_files)} tệp)")
 
     def on_search_navigation(self, file_path: str, line_no: int):
         """Khi người dùng nhấp đúp vào kết quả tìm kiếm -> nhảy tới file và dòng code đó."""
@@ -768,18 +880,102 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.code_viewer.set_code(f"// Không thể đọc file: {str(e)}")
 
-    def export_zip(self):
-        if not self.current_zip_path or not os.path.isfile(self.current_zip_path):
-            QMessageBox.warning(self, "Chưa có file ZIP", "Không tìm thấy file ZIP đã nén.")
+    def on_dll_decompile_requested(self, dll_path: str):
+        """Kích hoạt dịch ngược theo yêu cầu cho một DLL cụ thể."""
+        if not os.path.isfile(dll_path):
+            QMessageBox.warning(self, "Không tìm thấy", f"Không tìm thấy file: {dll_path}")
             return
 
+        dll_name = Path(dll_path).name
+        out_p = Path(self.current_output_dir or OUTPUT_DIR)
+        target_src_dir = out_p / f"{Path(dll_path).stem}_decompiled"
+
+        self._apply_status_style("info", f"⚡ Đang dịch ngược module .NET: {dll_name}...")
+        self.progress_bar.setValue(35)
+        QApplication.processEvents()
+
+        from engines.dotnet_engine import DotNetDecompiler
+        engine = DotNetDecompiler()
+        res = engine.decompile(dll_path, str(target_src_dir))
+
+        if res.get("success"):
+            self.progress_bar.setValue(100)
+            self._apply_status_style("ok", f"✅ Đã dịch ngược thành công module: {dll_name}")
+            self.refresh_tree_from_disk(str(out_p))
+            self.dll_manager.refresh()
+            self.tabs.setCurrentIndex(0)
+            QMessageBox.information(
+                self,
+                "Hoàn tất dịch ngược",
+                f"Đã dịch ngược thành công module {dll_name}!\n\nMã nguồn C# đã được thêm vào cây thư mục:\n👉 {target_src_dir.name}/"
+            )
+        else:
+            self._apply_status_style("error", f"❌ Dịch ngược thất bại: {res.get('message', '')}")
+            QMessageBox.warning(
+                self,
+                "Thất bại",
+                f"Không thể dịch ngược {dll_name}:\n{res.get('message', '')}"
+            )
+
+    def on_open_decompiled_source(self, decompiled_dir: str):
+        """Chuyển sang Tab Mã nguồn và chọn file đầu tiên của module vừa chọn."""
+        self.tabs.setCurrentIndex(0)
+        p = Path(decompiled_dir)
+        cs_files = list(p.rglob("*.cs"))
+        if cs_files:
+            self.category_tabs.setCurrentIndex(1)
+            target_str = str(cs_files[0].resolve())
+            for idx in range(self.file_tree.topLevelItemCount()):
+                item = self.file_tree.topLevelItem(idx)
+                if item.data(0, Qt.ItemDataRole.UserRole) == target_str:
+                    self.file_tree.setCurrentItem(item)
+                    self.on_file_item_clicked(item, 0)
+                    break
+
+    def export_zip(self):
+        """Xuất toàn bộ mã nguồn và tài nguyên đã khôi phục sang file ZIP (hỗ trợ nén on-the-fly)."""
+        out_dir = self.current_output_dir
+        if not out_dir or not os.path.isdir(out_dir):
+            if self.selected_file_path:
+                stem = Path(self.selected_file_path).stem
+                candidate = OUTPUT_DIR / f"{stem}_source"
+                if candidate.is_dir():
+                    out_dir = str(candidate.resolve())
+
+        if not out_dir or not os.path.isdir(out_dir):
+            QMessageBox.warning(self, "Chưa có dữ liệu", "Chưa có thư mục mã nguồn nào để xuất file ZIP.")
+            return
+
+        default_name = f"{Path(out_dir).name}.zip"
         save_dest, _ = QFileDialog.getSaveFileName(
             self,
             "Lưu file ZIP mã nguồn",
-            os.path.basename(self.current_zip_path),
+            default_name,
             "Zip Archive (*.zip)"
         )
-        if save_dest:
-            import shutil
-            shutil.copy2(self.current_zip_path, save_dest)
-            QMessageBox.information(self, "Đã lưu", f"Đã lưu file ZIP tại:\n{save_dest}")
+        if not save_dest:
+            return
+
+        # 1. Nếu file ZIP đã được tạo sẵn và còn tồn tại trên đĩa -> copy nhanh
+        if self.current_zip_path and os.path.isfile(self.current_zip_path):
+            try:
+                import shutil
+                shutil.copy2(self.current_zip_path, save_dest)
+                self._apply_status_style("ok", f"✅ Đã lưu file ZIP: {Path(save_dest).name}")
+                QMessageBox.information(self, "Thành công", f"Đã lưu file ZIP tại:\n{save_dest}")
+                return
+            except Exception:
+                pass
+
+        # 2. Nếu chưa có hoặc file cũ bị xóa: tự động đóng gói on-the-fly ngay lập tức
+        try:
+            self._apply_status_style("info", "⏳ Đang đóng gói dữ liệu sang file ZIP...")
+            QApplication.processEvents()
+            from core.file_manager import FileManager
+            FileManager.create_zip(out_dir, save_dest)
+            self.current_zip_path = save_dest
+            self._apply_status_style("ok", f"✅ Đã đóng gói và lưu ZIP thành công: {Path(save_dest).name}")
+            QMessageBox.information(self, "Đã lưu", f"Đã đóng gói và lưu file ZIP thành công tại:\n{save_dest}")
+        except Exception as e:
+            self._apply_status_style("error", f"❌ Lỗi nén ZIP: {str(e)}")
+            QMessageBox.critical(self, "Lỗi nén ZIP", f"Không thể tạo file ZIP: {str(e)}")

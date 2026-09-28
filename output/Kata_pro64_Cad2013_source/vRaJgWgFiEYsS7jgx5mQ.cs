@@ -1,4 +1,0 @@
-using System;
-using System.Globalization;
-
-internal delegate bool vRaJgWgFiEYsS7jgx5mQ(string P_0, NumberStyles P_1, IFormatProvider P_2, ref int P_3);

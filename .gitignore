@@ -8,6 +8,8 @@ uploads/*
 !uploads/.gitkeep
 output/*
 !output/.gitkeep
+scratch/
+
 
 # External large tools
 tools/jadx/

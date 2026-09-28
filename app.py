@@ -50,6 +50,7 @@ with st.sidebar:
     st.write("Chọn các tác vụ xử lý mong muốn:")
 
     opt_detect_env = st.checkbox("Tự động nhận diện môi trường / Framework", value=True)
+    opt_deobfuscate = st.checkbox("Gỡ rối & Chuẩn hóa tên (Deobfuscate & Rename)", value=True, help="Tự động gỡ rối bằng de4dot, khôi phục controls [AccessedThroughProperty], chuẩn hóa tên file/hàm/biến.")
     opt_extract_strings = st.checkbox("Trích xuất danh sách chuỗi ký tự (Strings)", value=True)
     opt_tree_structure = st.checkbox("Khôi phục cây cấu trúc thư mục/lớp (Hierarchy)", value=True)
     opt_clean_code = st.checkbox("Định dạng và làm sạch mã nguồn đầu ra", value=True)
@@ -239,10 +240,12 @@ if uploaded_file is not None:
 
                 if eng == "dotnet":
                     output_folder = "./output_csharp"
-                    res = decompile_dll_with_ilspy(save_result["path"], output_folder)
-                    if not res["success"]:
+                    from engines.dotnet_engine import DotNetDecompiler
+                    dotnet_dec = DotNetDecompiler()
+                    res = dotnet_dec.decompile(save_result["path"], output_folder, deobfuscate=opt_deobfuscate)
+                    if not res.get("success"):
                         status_box.update(label="❌ Lỗi trong quá trình dịch ngược!", state="error", expanded=True)
-                        st.error(res["message"])
+                        st.error(res.get("message", "Lỗi dịch ngược."))
                         st.stop()
                     decompile_success = True
                     progress_bar.progress(85)
@@ -278,6 +281,27 @@ if uploaded_file is not None:
             status_box.update(label="✅ Quá trình khôi phục hoàn tất!", state="complete", expanded=False)
 
         st.success("Mã nguồn đã được trích xuất thành công!")
+
+        # Hiển thị báo cáo gỡ rối định danh nếu có
+        renaming_file = os.path.join(output_folder, "renaming_report.json")
+        if os.path.exists(renaming_file):
+            try:
+                import json as _json
+                with open(renaming_file, "r", encoding="utf-8") as _rf:
+                    _ren_data = _json.load(_rf)
+                with st.expander("🏷️ Báo cáo Gỡ rối & Chuẩn hóa định danh (Symbol Renamer)", expanded=True):
+                    r_c1, r_c2, r_c3 = st.columns(3)
+                    with r_c1:
+                        st.metric("Controls khôi phục", _ren_data.get("controls_restored", 0))
+                        st.metric("Lớp chuẩn hóa", _ren_data.get("classes_renamed", 0))
+                    with r_c2:
+                        st.metric("Biến chuẩn hóa", _ren_data.get("fields_renamed", 0))
+                        st.metric("Hàm chuẩn hóa", _ren_data.get("methods_renamed", 0))
+                    with r_c3:
+                        st.metric("Tệp đổi tên", _ren_data.get("files_renamed", 0))
+                        st.metric("Thư mục chuẩn hóa", _ren_data.get("directories_renamed", 0))
+            except Exception:
+                pass
 
         # ---------------------------------------------------------
         # Khu vực hiển thị kết quả (Viewer & Download)

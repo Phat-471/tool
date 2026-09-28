@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/obfuscator_detector.py
 Nhan dien chinh xac loai Obfuscator tu binary signature va metadata patterns.
 Tra ve profile voi tham so de4dot toi uu cho tung truong hop.
@@ -11,6 +11,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+# Mẫu regex chuẩn hóa và giải mã định danh cho de4dot:
+# - Khử chuỗi ngẫu nhiên chữ hoa, thường kết hợp số (ajhmisBcZrLc4u5dRKZn, uQ4DbMFRj7Q)
+# - Khử tên 1-2 ký tự vô nghĩa
+# - Khử cụm 4 phụ âm lạ liên tiếp (dnUDFwhWrBF, zkp...)
+# - Khử các chuỗi ngẫu nhiên dài >= 15 ký tự
+SMART_RENAME_PATTERN = (
+    "!^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)[a-zA-Z0-9_]{6,}$"
+    "&!^[a-zA-Z0-9]{1,2}$"
+    "&!^[A-Za-z]_[0-9]+$"
+    "&!.*[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]{4,}.*"
+    "&!^[a-zA-Z0-9]{15,}$"
+)
+
 # Chu ky nhan dien tung Obfuscator
 _SIGNATURES = [
     {
@@ -19,9 +32,9 @@ _SIGNATURES = [
         "level_hints": {b"Maximum": "maximum", b"Ultra": "ultra", b"Normal": "normal"},
         "features": ["string_encrypt", "control_flow", "anti_dump", "anti_debug"],
         "de4dot_strategies": [
-            ["--strtyp", "delegate"],
-            ["--strtyp", "delegate", "--strarg", ""],
-            ["--strtyp", "emptyclass"],
+            ["--crx-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN, "--strtyp", "delegate"],
+            ["--crx-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN, "--strtyp", "emptyclass"],
+            ["--crx-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN],
             [],
         ],
     },
@@ -30,63 +43,67 @@ _SIGNATURES = [
         "patterns": [b"EazfuscatorNet", b"Eazfuscator", b"eaz_"],
         "level_hints": {},
         "features": ["string_encrypt", "control_flow", "resource_encrypt"],
-        "de4dot_strategies": [["--detect", "eaz"], []],
+        "de4dot_strategies": [["--detect", "eaz", "--ef-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN], ["--un-name", SMART_RENAME_PATTERN]],
     },
     {
         "name": "SmartAssembly",
         "patterns": [b"SmartAssembly.Attributes", b"Obfuscated by SA", b"SmartAssembly"],
         "level_hints": {},
         "features": ["string_encrypt", "control_flow", "anti_decompile"],
-        "de4dot_strategies": [["--detect", "sa"], []],
+        "de4dot_strategies": [["--detect", "sa", "--sa-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN], ["--un-name", SMART_RENAME_PATTERN]],
     },
     {
         "name": ".NET Reactor",
         "patterns": [b"CliSecure", b"CR_", b"Reactor", b"rpx"],
         "level_hints": {},
         "features": ["native_stub", "string_encrypt", "anti_debug"],
-        "de4dot_strategies": [["--detect", "cr"], ["--strtyp", "delegate"], []],
+        "de4dot_strategies": [
+            ["--detect", "cr", "--dr4-name", SMART_RENAME_PATTERN, "--dr3-name", SMART_RENAME_PATTERN, "--dr4-sname", "True", "--un-name", SMART_RENAME_PATTERN, "--strtyp", "delegate"],
+            ["--detect", "cr", "--un-name", SMART_RENAME_PATTERN],
+            [],
+        ],
     },
     {
         "name": "Dotfuscator",
         "patterns": [b"Dotfuscator", b"Preemptive", b"DotfuscatorAttribute"],
         "level_hints": {},
         "features": ["renaming", "control_flow", "string_encrypt"],
-        "de4dot_strategies": [["--detect", "df"], []],
+        "de4dot_strategies": [["--detect", "df", "--df-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN], ["--un-name", SMART_RENAME_PATTERN]],
     },
     {
         "name": "Babel .NET Obfuscator",
         "patterns": [b"BabelObfuscator", b"Babel.Runtime"],
         "level_hints": {},
         "features": ["string_encrypt", "control_flow"],
-        "de4dot_strategies": [["--detect", "bl"], []],
+        "de4dot_strategies": [["--detect", "bl", "--bl-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN], ["--un-name", SMART_RENAME_PATTERN]],
     },
     {
         "name": "Agile.NET (Xenocode)",
         "patterns": [b"Xenocode", b"SecureTeam", b"AgileDotNetRT"],
         "level_hints": {},
         "features": ["virtualization", "string_encrypt"],
-        "de4dot_strategies": [["--detect", "an"], []],
+        "de4dot_strategies": [["--detect", "an", "--an-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN], ["--un-name", SMART_RENAME_PATTERN]],
     },
     {
         "name": "MaxToCode",
         "patterns": [b"MaxToCode", b"NetGuard", b"NETGuard"],
         "level_hints": {},
         "features": ["native_code_conversion", "string_encrypt"],
-        "de4dot_strategies": [["--detect", "mc"], []],
+        "de4dot_strategies": [["--detect", "mc", "--mc-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN], ["--un-name", SMART_RENAME_PATTERN]],
     },
     {
         "name": "Crypto Obfuscator",
         "patterns": [b"CryptoObfuscator", b"LogicNP.CryptoObfuscator"],
         "level_hints": {},
         "features": ["string_encrypt", "control_flow", "anti_debug"],
-        "de4dot_strategies": [["--detect", "co"], []],
+        "de4dot_strategies": [["--detect", "co", "--co-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN], ["--un-name", SMART_RENAME_PATTERN]],
     },
     {
         "name": "Obfuscar",
         "patterns": [b"Obfuscar"],
         "level_hints": {},
         "features": ["renaming", "string_encrypt"],
-        "de4dot_strategies": [["--detect", "oc"], []],
+        "de4dot_strategies": [["--detect", "oc", "--oc-name", SMART_RENAME_PATTERN, "--un-name", SMART_RENAME_PATTERN], ["--un-name", SMART_RENAME_PATTERN]],
     },
     {
         "name": "UPX Packer",

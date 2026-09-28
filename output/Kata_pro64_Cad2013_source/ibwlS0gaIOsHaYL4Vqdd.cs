@@ -1,3 +1,0 @@
-using System.IO;
-
-internal delegate byte[] ibwlS0gaIOsHaYL4Vqdd(object P_0, Stream P_1);

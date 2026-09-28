@@ -62,63 +62,29 @@ class DecompileWorker(QThread):
 
             if engine_name == "dotnet":
                 decompiler = DotNetDecompiler()
+                deobf_enabled = self.options.get("deobfuscate", True)
 
-                # ── Thử ILSpy lần 1 ────────────────────────────────
-                self.progress_updated.emit(60, "Đang chạy ILSpy CLI để trích xuất mã nguồn C#...")
-                self.status_hint.emit("info", "▶ ILSpy: Đang dịch ngược assembly...")
+                self.progress_updated.emit(60, "Đang khử làm rối & dịch ngược mã nguồn C#...")
+                if deobf_enabled:
+                    self.status_hint.emit("info", "🔧 de4dot & SymbolRenamer: Đang gỡ rối và chuẩn hóa định danh...")
+                else:
+                    self.status_hint.emit("info", "▶ ILSpy: Đang dịch ngược assembly...")
 
-                # Chạy ILSpy lần đầu (kiểm tra nhanh)
-                ok1, msg1, _, _ = decompiler._run_ilspy(
-                    decompiler.get_executable_path() or "",
-                    self.file_path,
-                    Path(specific_output_dir),
-                )
-
-                if not ok1 and ("[BAD_IMAGE]" in msg1 or decompiler._is_bad_image_error(msg1)):
-                    # ── Phát hiện BadImageFormatException ──
-                    self.progress_updated.emit(
-                        65,
-                        "⚠️ Phát hiện lỗi Metadata (BadImageFormatException). "
-                        "Đang tiến hành khôi phục..."
-                    )
-                    self.status_hint.emit(
-                        "warn",
-                        "⚠️ Phát hiện lỗi Metadata – Đang tiến hành khôi phục Metadata bằng de4dot..."
-                    )
-                    time.sleep(0.4)
-
-                    # ── de4dot ──
-                    self.progress_updated.emit(70, "Đang chạy de4dot để gỡ làm rối assembly...")
-                    self.status_hint.emit("info", "🔧 de4dot: Đang gỡ làm rối (Obfuscation removal)...")
-
-                    cleaned_path, de4dot_log = decompiler._preprocess_with_de4dot(
-                        self.file_path, Path(specific_output_dir)
-                    )
-
-                    if cleaned_path:
-                        self.status_hint.emit("ok", f"✅ de4dot: {de4dot_log}")
-                        self.progress_updated.emit(78, "Đang dịch ngược lại file đã làm sạch bằng ILSpy...")
-                        self.status_hint.emit("info", "▶ ILSpy: Đang dịch ngược lại file đã khử khuẩy...")
-                    else:
-                        self.status_hint.emit("warn", f"⚠️ de4dot: {de4dot_log}")
-                        self.progress_updated.emit(75, "Đang thử dnSpy CLI...")
-                        self.status_hint.emit("info", "🔄 dnSpy: Đang thử dịch ngược bằng dnSpy...")
-
-                # ── Gọi engine đầy đủ (bao gồm toàn bộ fallback chain) ──
-                res = decompiler.decompile(self.file_path, specific_output_dir)
+                # Gọi decompile với tùy chọn deobfuscate
+                res = decompiler.decompile(self.file_path, specific_output_dir, deobfuscate=deobf_enabled)
 
                 # Sau khi hoàn tất: phân tích kết quả và gửi status_hint
                 if res.get("success"):
                     msg_body = res.get("message", "")
-                    if "de4dot" in msg_body or "[BAD_IMAGE]" in res.get("stderr", ""):
-                        self.status_hint.emit("ok", "✅ Khôi phục Metadata thành công!")
+                    if "gỡ rối" in msg_body or "de4dot" in msg_body:
+                        self.status_hint.emit("ok", "✅ Dịch ngược & Chuẩn hóa định danh thành công!")
                     elif "pe_summary" in msg_body or "PE" in msg_body:
                         self.status_hint.emit(
                             "warn",
                             "⚠️ Không dịch ngược được .NET – đã xuất báo cáo cấu trúc PE."
                         )
                     else:
-                        self.status_hint.emit("ok", "✅ ILSpy dịch ngược thành công!")
+                        self.status_hint.emit("ok", "✅ Dịch ngược C# thành công!")
                 else:
                     self.status_hint.emit("error", "❌ Không thể dịch ngược – xem chi tiết trong tab Phân tích.")
 
@@ -197,3 +163,25 @@ class DecompileWorker(QThread):
 
         except Exception as e:
             self.error_occurred.emit(f"Lỗi ngoại lệ: {str(e)}")
+
+
+class SymbolRenamerWorker(QThread):
+    """Luồng xử lý ngầm cho quá trình khôi phục định danh và chuẩn hóa mã nguồn."""
+
+    progress_updated = pyqtSignal(int, str)
+    finished = pyqtSignal(dict)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, target_dir: str):
+        super().__init__()
+        self.target_dir = target_dir
+
+    def run(self):
+        try:
+            from core.symbol_renamer import SymbolRenamer
+            self.progress_updated.emit(15, "Đang quét mã nguồn để phân tích định danh và cấu trúc...")
+            rep = SymbolRenamer.enhance_and_rename_directory(self.target_dir)
+            self.progress_updated.emit(100, "Hoàn tất chuẩn hóa và gỡ rối định danh!")
+            self.finished.emit(rep)
+        except Exception as exc:
+            self.error_occurred.emit(str(exc))

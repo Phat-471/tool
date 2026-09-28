@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -27,7 +28,7 @@ from PyQt6.QtWidgets import (
 from core.file_manager import FileManager
 from core.detector import FileDetector
 from ui.code_viewer import CodeViewerWidget
-from ui.worker_thread import DecompileWorker
+from ui.worker_thread import DecompileWorker, SymbolRenamerWorker
 from ui.search_widget import GlobalSearchWidget
 from ui.dll_manager_widget import DLLManagerWidget
 from config import SUPPORTED_EXTENSIONS
@@ -74,6 +75,26 @@ class MainWindow(QMainWindow):
         self.btn_select_folder.clicked.connect(self.choose_folder)
         file_layout.addWidget(self.btn_select_folder)
 
+        self.btn_open_dumper = QPushButton("🎯 Dump từ RAM (AutoCAD)...")
+        self.btn_open_dumper.setFixedWidth(205)
+        self.btn_open_dumper.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #7C3AED;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #6D28D9;
+            }
+            """
+        )
+        self.btn_open_dumper.setToolTip("Trích xuất trực tiếp các DLL .NET đã giải mã JIT từ bộ nhớ RAM của AutoCAD/Revit đang chạy")
+        self.btn_open_dumper.clicked.connect(self.open_process_dumper)
+        file_layout.addWidget(self.btn_open_dumper)
+
         self.lbl_file_path = QLabel("Kéo thả file hoặc thư mục cài đặt vào đây, hoặc bấm 'Chọn tệp...' / 'Chọn thư mục...'")
         self.lbl_file_path.setStyleSheet("color: #64748B; font-style: italic;")
         file_layout.addWidget(self.lbl_file_path)
@@ -89,6 +110,11 @@ class MainWindow(QMainWindow):
         self.chk_detect = QCheckBox("Nhận diện định dạng")
         self.chk_detect.setChecked(True)
         opt_layout.addWidget(self.chk_detect)
+
+        self.chk_deobfuscate = QCheckBox("Gỡ rối & Chuẩn hóa tên")
+        self.chk_deobfuscate.setChecked(True)
+        self.chk_deobfuscate.setToolTip("Khử làm rối (de4dot), khôi phục controls [AccessedThroughProperty], chuẩn hóa tên file/hàm/biến.")
+        opt_layout.addWidget(self.chk_deobfuscate)
 
         self.chk_hierarchy = QCheckBox("Khôi phục cấu trúc thư mục")
         self.chk_hierarchy.setChecked(True)
@@ -193,6 +219,8 @@ class MainWindow(QMainWindow):
         self.file_tree.setHeaderLabels(["Tên tệp"])
         self.file_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.file_tree.itemClicked.connect(self.on_file_item_clicked)
+        self.file_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.file_tree.customContextMenuRequested.connect(self.on_tree_context_menu)
         tree_layout.addWidget(self.file_tree)
         splitter.addWidget(tree_container)
 
@@ -208,6 +236,29 @@ class MainWindow(QMainWindow):
         self.lbl_current_file = QLabel("💻 Trình xem mã nguồn")
         self.lbl_current_file.setStyleSheet("font-weight: bold;")
         code_header_layout.addWidget(self.lbl_current_file)
+
+        self.btn_deobfuscate_symbols = QPushButton("✨ Gỡ rối định danh (SymbolRenamer)")
+        self.btn_deobfuscate_symbols.setEnabled(False)
+        self.btn_deobfuscate_symbols.setToolTip("Khôi phục tên thư mục, lớp, biến và hàm đã bị mã hóa/làm rối bằng SymbolRenamer")
+        self.btn_deobfuscate_symbols.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #059669;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover {
+                background-color: #047857;
+            }
+            QPushButton:disabled {
+                background-color: #94A3B8;
+            }
+            """
+        )
+        self.btn_deobfuscate_symbols.clicked.connect(self.trigger_symbol_renamer)
+        code_header_layout.addWidget(self.btn_deobfuscate_symbols)
 
         self.btn_export_zip = QPushButton("💾 Tải file ZIP")
         self.btn_export_zip.setEnabled(False)
@@ -346,6 +397,7 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(False)
         self.btn_select_file.setEnabled(False)
         self.btn_select_folder.setEnabled(False)
+        self.btn_open_dumper.setEnabled(False)
         self.file_tree.clear()
         self.code_viewer.clear()
         self.report_viewer.clear()
@@ -353,6 +405,7 @@ class MainWindow(QMainWindow):
 
         options = {
             "detect_env": self.chk_detect.isChecked(),
+            "deobfuscate": self.chk_deobfuscate.isChecked(),
             "hierarchy": self.chk_hierarchy.isChecked(),
             "export_zip": self.chk_zip.isChecked(),
         }
@@ -404,6 +457,7 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(True)
         self.btn_select_file.setEnabled(True)
         self.btn_select_folder.setEnabled(True)
+        self.btn_open_dumper.setEnabled(True)
         self.progress_bar.setValue(100)
 
         # Hiển thị báo cáo phân tích tĩnh (luôn hiển thị)
@@ -445,6 +499,7 @@ class MainWindow(QMainWindow):
 
         if self.current_output_dir:
             self.btn_export_zip.setEnabled(True)
+            self.btn_deobfuscate_symbols.setEnabled(True)
             self.dll_manager.set_output_directory(self.current_output_dir)
 
         # Xây dựng cây thư mục trên giao diện
@@ -570,6 +625,72 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
+        # Đọc báo cáo Gỡ rối & Chuẩn hóa định danh (renaming_report.json)
+        renaming_html = ""
+        if output_dir:
+            renaming_file = Path(output_dir) / "renaming_report.json"
+            if renaming_file.exists():
+                try:
+                    with open(renaming_file, "r", encoding="utf-8") as f:
+                        ren_data = json.load(f)
+
+                    ctrl_count = ren_data.get("controls_restored", 0)
+                    cls_count = ren_data.get("classes_renamed", 0)
+                    fld_count = ren_data.get("fields_renamed", 0)
+                    mth_count = ren_data.get("methods_renamed", 0)
+                    file_count = ren_data.get("files_renamed", 0)
+                    dir_count = ren_data.get("directories_renamed", 0)
+
+                    ctrl_rows = []
+                    for item in ren_data.get("details", {}).get("controls", [])[:15]:
+                        ctrl_rows.append(
+                            f"<tr>"
+                            f"<td><code>{item.get('control_type', '')}</code></td>"
+                            f"<td style='color:#DC2626;'><code>{item.get('old_name', '')}</code></td>"
+                            f"<td style='color:#15803D;font-weight:bold;'><code>{item.get('new_name', '')}</code> (từ {item.get('property_name', '')})</td>"
+                            f"</tr>"
+                        )
+
+                    ctrl_table = (
+                        f"<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;width:100%;border-color:#CBD5E1;font-size:12px;margin-top:8px;'>"
+                        f"<tr style='background:#F1F5F9;text-align:left;'><th>Loại Control</th><th>Tên bị rối (Old)</th><th>Tên đã khôi phục (New)</th></tr>"
+                        f"{''.join(ctrl_rows)}</table>"
+                        if ctrl_rows else "<p><i>Không có control nào cần khôi phục.</i></p>"
+                    )
+
+                    file_rows = []
+                    for item in ren_data.get("details", {}).get("files", [])[:10]:
+                        file_rows.append(
+                            f"<tr>"
+                            f"<td style='color:#DC2626;'><code>{item.get('old_path', '')}</code></td>"
+                            f"<td style='color:#15803D;font-weight:bold;'><code>{item.get('new_path', '')}</code></td>"
+                            f"</tr>"
+                        )
+                    file_table = (
+                        f"<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;width:100%;border-color:#CBD5E1;font-size:12px;margin-top:8px;'>"
+                        f"<tr style='background:#F1F5F9;text-align:left;'><th>Tệp cũ bị làm rối</th><th>Tệp mới đã chuẩn hóa</th></tr>"
+                        f"{''.join(file_rows)}</table>"
+                        if file_rows else ""
+                    )
+
+                    renaming_html = f"""
+                    <h3>🏷️ Báo cáo Gỡ rối & Chuẩn hóa Định danh ({ctrl_count} controls, {cls_count} lớp, {file_count} tệp)</h3>
+                    <p>Hệ thống đã tự động khôi phục tên controls từ <code>[AccessedThroughProperty]</code> và chuẩn hóa tên file theo lớp:</p>
+                    <ul>
+                        <li><b>Controls / Properties khôi phục:</b> {ctrl_count}</li>
+                        <li><b>Lớp / Class chuẩn hóa:</b> {cls_count}</li>
+                        <li><b>Biến / Trường chuẩn hóa:</b> {fld_count}</li>
+                        <li><b>Hàm / Method chuẩn hóa:</b> {mth_count}</li>
+                        <li><b>Tệp đổi tên theo Class:</b> {file_count}</li>
+                        <li><b>Thư mục chuẩn hóa theo Namespace:</b> {dir_count}</li>
+                    </ul>
+                    <p><b>Bảng chi tiết các Controls đã khôi phục:</b></p>
+                    {ctrl_table}
+                    {"<p><b>Bảng tệp mã nguồn đã đổi tên:</b></p>" + file_table if file_table else ""}
+                    """
+                except Exception:
+                    pass
+
         html = f"""
         <div style="font-family: Segoe UI, sans-serif; color: #1E293B; line-height: 1.5;">
             <h2 style="color: #2563EB; margin-bottom: 5px;">📊 Báo cáo Phân tích Chuyên Sâu</h2>
@@ -588,6 +709,8 @@ class MainWindow(QMainWindow):
             <ul>{prot_items}</ul>
 
             {sections_html}
+
+            {renaming_html}
 
             {inventory_html}
 
@@ -608,6 +731,7 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(True)
         self.btn_select_file.setEnabled(True)
         self.btn_select_folder.setEnabled(True)
+        self.btn_open_dumper.setEnabled(True)
         self.progress_bar.setValue(0)
         self._apply_status_style(
             "error",
@@ -718,9 +842,11 @@ class MainWindow(QMainWindow):
 
         self.lbl_tree.setText(f"📂 Cấu trúc ({visible_count}/{len(self.recovered_files)} tệp)")
 
-    def refresh_tree_from_disk(self, output_dir: str):
+    def refresh_tree_from_disk(self, output_dir: str, force: bool = False):
         """Quét lại thư mục output từ đĩa để cập nhật cây thư mục sau khi xử lý xong."""
         self.current_output_dir = output_dir
+        if hasattr(self, "btn_deobfuscate_symbols"):
+            self.btn_deobfuscate_symbols.setEnabled(True)
         if hasattr(self, "dll_manager"):
             self.dll_manager.set_output_directory(output_dir)
 
@@ -762,8 +888,8 @@ class MainWindow(QMainWindow):
         if not fresh_files:
             return
 
-        # Chỉ cập nhật khi có file mới hơn danh sách hiện tại
-        if len(fresh_files) > len(self.recovered_files):
+        # Cập nhật khi ép buộc hoặc khi danh sách đường dẫn file có thay đổi
+        if force or set(fresh_files.keys()) != set(self.recovered_files.keys()):
             self.recovered_files = fresh_files
             self.populate_tree(fresh_files)
             self.search_widget.set_files(fresh_files)
@@ -979,3 +1105,103 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._apply_status_style("error", f"❌ Lỗi nén ZIP: {str(e)}")
             QMessageBox.critical(self, "Lỗi nén ZIP", f"Không thể tạo file ZIP: {str(e)}")
+
+    # ---------------------------------------------------------
+    # Gỡ rối & Chuẩn hóa định danh (SymbolRenamer)
+    # ---------------------------------------------------------
+    def on_tree_context_menu(self, pos):
+        """Menu chuột phải trên cây thư mục mã nguồn."""
+        menu = QMenu(self)
+        item = self.file_tree.itemAt(pos)
+
+        act_rename = menu.addAction("✨ Gỡ rối & Chuẩn hóa định danh (SymbolRenamer)")
+        act_rename.triggered.connect(self.trigger_symbol_renamer)
+        if not self.current_output_dir or not os.path.isdir(self.current_output_dir):
+            act_rename.setEnabled(False)
+
+        if self.current_output_dir and os.path.exists(self.current_output_dir):
+            menu.addSeparator()
+            act_open_dir = menu.addAction("📂 Mở thư mục kết quả trong Explorer")
+            act_open_dir.triggered.connect(lambda: os.startfile(self.current_output_dir))
+
+        if item:
+            full_path = item.data(0, Qt.ItemDataRole.UserRole)
+            if full_path and os.path.exists(full_path):
+                act_open_file = menu.addAction("📄 Mở tệp bằng ứng dụng mặc định")
+                act_open_file.triggered.connect(lambda: os.startfile(full_path))
+
+        menu.exec(self.file_tree.viewport().mapToGlobal(pos))
+
+    def trigger_symbol_renamer(self):
+        """Kích hoạt SymbolRenamer trên thư mục kết quả hiện tại trong luồng ngầm."""
+        if not self.current_output_dir or not os.path.isdir(self.current_output_dir):
+            QMessageBox.information(
+                self,
+                "Chưa có thư mục kết quả",
+                "Vui lòng thực hiện dịch ngược một tệp hoặc mở thư mục mã nguồn trước khi chuẩn hóa định danh."
+            )
+            return
+
+        self.btn_deobfuscate_symbols.setEnabled(False)
+        self._apply_status_style("info", "🔧 Đang chạy SymbolRenamer: Chuẩn hóa thư mục, lớp, biến và hàm...")
+
+        self.renamer_worker = SymbolRenamerWorker(self.current_output_dir)
+        self.renamer_worker.progress_updated.connect(
+            lambda pct, msg: self._apply_status_style("info", f"🔧 [{pct}%] {msg}")
+        )
+        self.renamer_worker.finished.connect(self.on_symbol_renamer_finished)
+        self.renamer_worker.error_occurred.connect(self.on_symbol_renamer_error)
+        self.renamer_worker.start()
+
+    def on_symbol_renamer_finished(self, report: dict):
+        self.btn_deobfuscate_symbols.setEnabled(True)
+        from core.symbol_renamer import SymbolRenamer
+        summary = SymbolRenamer.get_summary_text(report)
+        if not summary:
+            summary = "Mã nguồn đã ở định dạng chuẩn hoặc không phát hiện định danh bị làm rối."
+
+        self._apply_status_style("ok", f"✅ Hoàn tất gỡ rối định danh! {summary}")
+
+        # Cập nhật lại cây thư mục
+        if self.current_output_dir:
+            self.refresh_tree_from_disk(self.current_output_dir, force=True)
+
+        # Cập nhật lại tab báo cáo phân tích
+        analysis_path = Path(self.current_output_dir) / "analysis_report.json"
+        analysis_data = {}
+        if analysis_path.is_file():
+            try:
+                import json
+                with open(analysis_path, "r", encoding="utf-8") as f:
+                    analysis_data = json.load(f)
+            except Exception:
+                pass
+        self.render_analysis_report(analysis_data, self.current_output_dir)
+
+    def on_symbol_renamer_error(self, err_msg: str):
+        self.btn_deobfuscate_symbols.setEnabled(True)
+        self._apply_status_style("error", f"❌ Lỗi SymbolRenamer: {err_msg[:100]}")
+
+    # ---------------------------------------------------------
+    # Trích xuất DLL từ bộ nhớ RAM (Process Memory Dumper)
+    # ---------------------------------------------------------
+    def open_process_dumper(self):
+        """Mở hộp thoại trích xuất DLL .NET từ bộ nhớ RAM của tiến trình CAD đang chạy."""
+        try:
+            from ui.process_dumper_dialog import ProcessDumperDialog
+            dialog = ProcessDumperDialog(self)
+            dialog.dump_and_decompile_requested.connect(self.handle_dumped_file_selected)
+            dialog.exec()
+        except Exception as e:
+            self._apply_status_style("error", f"❌ Không thể mở Process Dumper: {str(e)}")
+            QMessageBox.critical(self, "Lỗi Process Dumper", f"Lỗi khởi chạy bộ trích xuất RAM:\n{str(e)}")
+
+    def handle_dumped_file_selected(self, dumped_dll_path: str):
+        """Xử lý khi người dùng chọn Dump & Dịch ngược ngay một DLL từ RAM."""
+        if not dumped_dll_path or not os.path.isfile(dumped_dll_path):
+            return
+        self.set_selected_file(dumped_dll_path)
+        self._apply_status_style("info", f"🎯 Đã nạp DLL từ RAM: {Path(dumped_dll_path).name}. Đang bắt đầu dịch ngược...")
+        self.start_processing()
+
+

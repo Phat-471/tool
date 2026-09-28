@@ -1,3 +1,0 @@
-using System.Drawing;
-
-internal delegate void L5LVHFkocoTb9ptNQCYq(object P_0, RectangleF P_1, float P_2, float P_3, Color P_4, float P_5);

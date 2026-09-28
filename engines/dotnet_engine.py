@@ -92,6 +92,18 @@ class DotNetDecompiler(BaseDecompiler):
         stem = Path(input_path).stem
         logs: List[str] = []
 
+        # Import SMART_RENAME_PATTERN từ obfuscator_detector
+        try:
+            from core.obfuscator_detector import SMART_RENAME_PATTERN
+        except Exception:
+            SMART_RENAME_PATTERN = (
+                "!^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)[a-zA-Z0-9_]{6,}$"
+                "&!^[a-zA-Z0-9]{1,2}$"
+                "&!^[A-Za-z]_[0-9]+$"
+                "&!.*[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]{4,}.*"
+                "&!^[a-zA-Z0-9]{15,}$"
+            )
+
         # Step 1: Detect obfuscator to select optimal strategy
         profile = self._detect_obfuscator_profile(input_path)
         if profile and profile.is_detected:
@@ -102,14 +114,14 @@ class DotNetDecompiler(BaseDecompiler):
                 + " | Multi-layer=" + str(profile.is_multi_layer)
             )
         else:
-            # Generic: try multiple strtyp modes
+            # Generic: luôn kích hoạt cờ khử làm rối định danh (--un-name) và các chế độ giải mã chuỗi
             strategies = [
-                ["--strtyp", "delegate"],
-                ["--strtyp", "emptyclass"],
-                ["--strtyp", "static"],
-                [],
+                ["--un-name", SMART_RENAME_PATTERN, "--strtyp", "delegate"],
+                ["--un-name", SMART_RENAME_PATTERN, "--strtyp", "static"],
+                ["--un-name", SMART_RENAME_PATTERN, "--strtyp", "emulate"],
+                ["--un-name", SMART_RENAME_PATTERN],
             ]
-            logs.append("Generic strategy (obfuscator not identified).")
+            logs.append("Generic strategy with SMART_RENAME_PATTERN.")
 
         # Step 2: Apply strategies pass by pass
         current_input = input_path
@@ -120,8 +132,11 @@ class DotNetDecompiler(BaseDecompiler):
         ext = Path(input_path).suffix or ".dll"
         for pass_idx, strategy in enumerate(strategies[:_MAX_DEOBF_PASSES], start=1):
             cleaned_file = work_dir / f"{stem}_pass{pass_idx}{ext}"
-            cmd = [de4dot_bin, current_input, "-o", str(cleaned_file)] + strategy
-            strat_label = " ".join(strategy) if strategy else "(generic)"
+            strat = list(strategy)
+            if "--un-name" not in strat and "--dont-rename" not in strat:
+                strat.extend(["--un-name", SMART_RENAME_PATTERN])
+            cmd = [de4dot_bin, current_input, "-o", str(cleaned_file)] + strat
+            strat_label = " ".join(strat) if strat else "(generic)"
             logs.append("Pass " + str(pass_idx) + ": de4dot " + strat_label)
 
             try:
@@ -498,16 +513,32 @@ class DotNetDecompiler(BaseDecompiler):
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
-        # ── Bước 1: Thử dịch trực tiếp bằng ILSpy ────────────────────
-        ok, msg, stdout, stderr = self._run_ilspy(executable, input_path, out_path)
+        deobf_requested = kwargs.get("deobfuscate", True)
+        profile = self._detect_obfuscator_profile(input_path)
+        is_obfuscated = (profile and profile.is_detected) or deobf_requested
+
+        target_file = input_path
+        de4dot_applied = False
+        de4dot_log = ""
+
+        # ── Bước 0: Khử làm rối chủ động bằng de4dot nếu phát hiện hoặc được yêu cầu ──
+        if is_obfuscated and self.get_de4dot_executable():
+            cleaned_path, de4dot_log = self._preprocess_with_de4dot(input_path, out_path)
+            if cleaned_path and Path(cleaned_path).exists() and Path(cleaned_path).stat().st_size > 0:
+                target_file = cleaned_path
+                de4dot_applied = True
+
+        # ── Bước 1: Thử dịch ngược bằng ILSpy ────────────────────
+        ok, msg, stdout, stderr = self._run_ilspy(executable, target_file, out_path)
 
         if ok:
             enh_msg = self._postprocess_code_enhancement(out_path)
             sln_msg = self._try_generate_solution(out_path)
+            deobf_note = " (Đã khử làm rối qua de4dot)" if de4dot_applied else ""
             return {
                 "success": True,
                 "output_dir": str(out_path.resolve()),
-                "message": f"✅ Dịch ngược C# thành công – {msg}{enh_msg}{sln_msg}",
+                "message": f"✅ Dịch ngược C# thành công{deobf_note} – {msg}{enh_msg}{sln_msg}",
                 "stdout": stdout,
                 "stderr": "",
             }
@@ -515,8 +546,8 @@ class DotNetDecompiler(BaseDecompiler):
         err_text = msg  # stderr + stdout gộp lại từ _run_ilspy
         is_bad_image = "[BAD_IMAGE]" in err_text or self._is_bad_image_error(err_text)
 
-        # ── Bước 2a: BadImageFormatException / thất bại → thử de4dot trước ──
-        if is_bad_image or not ok:
+        # ── Bước 2a: Nếu chưa chạy de4dot và bị BadImage hoặc lỗi → chạy de4dot ──
+        if not de4dot_applied and (is_bad_image or not ok):
             cleaned_path, de4dot_log = self._preprocess_with_de4dot(input_path, out_path)
 
             if cleaned_path:
@@ -543,9 +574,9 @@ class DotNetDecompiler(BaseDecompiler):
             else:
                 err_text += f"\n[de4dot] {de4dot_log}"
 
-        # ── Bước 2b: BadImageFormatException → thử dnSpy CLI ─────────
-        if is_bad_image:
-            ok_dnspy, msg_dnspy = self._try_dnspy_cli(input_path, out_path)
+        # ── Bước 2b: BadImageFormatException / Thất bại → thử dnSpy CLI ─────────
+        if is_bad_image or not ok:
+            ok_dnspy, msg_dnspy = self._try_dnspy_cli(target_file, out_path)
             if ok_dnspy:
                 enh_msg = self._postprocess_code_enhancement(out_path)
                 sln_msg = self._try_generate_solution(out_path)
@@ -566,7 +597,20 @@ class DotNetDecompiler(BaseDecompiler):
     # ------------------------------------------------------------------
 
     def _postprocess_code_enhancement(self, out_path: Path) -> str:
-        """Tự động giải mã chuỗi, trích xuất IOCs và chèn chú thích vào code C#."""
+        """Tự động chuẩn hóa tên (SymbolRenamer), giải mã chuỗi, trích xuất IOCs và chèn chú thích vào code C#."""
+        summary_parts = []
+
+        # 1. Khôi phục định danh và chuẩn hóa tên file/hàm/biến
+        try:
+            from core.symbol_renamer import SymbolRenamer
+            rename_rep = SymbolRenamer.enhance_and_rename_directory(str(out_path))
+            renamer_sum = SymbolRenamer.get_summary_text(rename_rep)
+            if renamer_sum:
+                summary_parts.append(renamer_sum.strip(" ()"))
+        except Exception:
+            pass
+
+        # 2. Giải mã chuỗi Base64 / Hex array và IOCs
         try:
             from core.string_decryptor import StringDecryptor
             inv = StringDecryptor.enhance_decompiled_directory(str(out_path))
@@ -581,9 +625,12 @@ class DotNetDecompiler(BaseDecompiler):
             if ips_count > 0:
                 parts.append(f"{ips_count} IPs")
             if parts:
-                return f" ({', '.join(parts)})"
+                summary_parts.append(", ".join(parts))
         except Exception:
             pass
+
+        if summary_parts:
+            return f" ({'; '.join(summary_parts)})"
         return ""
 
     def _try_generate_solution(self, out_path: Path) -> str:

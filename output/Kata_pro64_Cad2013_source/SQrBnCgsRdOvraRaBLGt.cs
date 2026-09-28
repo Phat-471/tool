@@ -1,3 +1,0 @@
-using System;
-
-internal delegate void SQrBnCgsRdOvraRaBLGt(object P_0, EventHandler P_1);

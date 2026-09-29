@@ -185,3 +185,30 @@ class SymbolRenamerWorker(QThread):
             self.finished.emit(rep)
         except Exception as exc:
             self.error_occurred.emit(str(exc))
+
+
+class CleanPipelineWorker(QThread):
+    """Luồng xử lý ngầm cho 1-Click Pipeline tái tạo mã nguồn sạch từ DLL Dump."""
+
+    progress_updated = pyqtSignal(int, str)
+    finished = pyqtSignal(bool, str)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, dump_dir: str = "dumps/acad_13008", output_dir: str = "output/Kata_pro64_Cad2013_clean_source"):
+        super().__init__()
+        self.dump_dir = dump_dir
+        self.output_dir = output_dir
+
+    def run(self):
+        try:
+            from rebuild_clean_source import run_pipeline
+            self.progress_updated.emit(10, "Đang khởi động 1-Click Pipeline từ DLL Dump...")
+            success = run_pipeline(self.dump_dir, self.output_dir, force_clean=True)
+            if success:
+                self.progress_updated.emit(100, "Hoàn tất tái tạo mã nguồn sạch!")
+                self.finished.emit(True, self.output_dir)
+            else:
+                self.error_occurred.emit("Pipeline gặp sự cố trong quá trình dịch ngược hoặc chuẩn hóa.")
+        except Exception as exc:
+            self.error_occurred.emit(str(exc))
+

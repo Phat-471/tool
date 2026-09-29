@@ -1,0 +1,1 @@
+internal delegate int GetDelegateInt_1(object objectParam, string stringParam, int intParam, double doubleParam, double doubleParam, double doubleParam, string stringParam, double doubleParam, int intParam, string stringParam);

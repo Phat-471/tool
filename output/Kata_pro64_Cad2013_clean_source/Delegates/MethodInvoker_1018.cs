@@ -1,0 +1,3 @@
+using System.Windows.Forms;
+
+internal delegate void MethodInvoker_1018(object object_0, DataGridViewEditingControlShowingEventHandler dataGridViewEditingControlShowingEventHandler_0);

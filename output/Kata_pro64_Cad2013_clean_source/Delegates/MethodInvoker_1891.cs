@@ -1,0 +1,1 @@
+internal delegate int MethodInvoker_1891(object object_0, ref int int_0, ref string[] string_0, ref double[] double_0, ref double[] double_1, ref bool[] bool_0, ref string[] string_1, ref bool[] bool_1, ref double[] double_2);

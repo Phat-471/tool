@@ -1,0 +1,3 @@
+using Autodesk.AutoCAD.ApplicationServices;
+
+internal delegate void MethodInvoker_1506(object object_0, DocumentCollectionEventHandler documentCollectionEventHandler_0);

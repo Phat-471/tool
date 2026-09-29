@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "fljuciHtsgM=",
+  "success": true,
+  "projectFilePath": "e:\\code\\tol\\output\\Kata_pro64_Cad2013_clean_source\\Kata_pro64_Cad2013_de4dot.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\IT\\.nuget\\packages\\microsoft.netframework.referenceassemblies\\1.0.3\\microsoft.netframework.referenceassemblies.1.0.3.nupkg.sha512",
+    "C:\\Users\\IT\\.nuget\\packages\\microsoft.netframework.referenceassemblies.net48\\1.0.3\\microsoft.netframework.referenceassemblies.net48.1.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}

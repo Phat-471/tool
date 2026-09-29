@@ -1,0 +1,4 @@
+e:\code\tol\output\Kata_pro64_Cad2013_clean_source\obj\Debug\net48\Kata_pro64_Cad2013_de4dot.csproj.AssemblyReference.cache
+e:\code\tol\output\Kata_pro64_Cad2013_clean_source\obj\Debug\net48\Kata_pro64_Cad2013_de4dot.GeneratedMSBuildEditorConfig.editorconfig
+e:\code\tol\output\Kata_pro64_Cad2013_clean_source\obj\Debug\net48\Kata_pro64_Cad2013_de4dot.csproj.CoreCompileInputs.cache
+e:\code\tol\output\Kata_pro64_Cad2013_clean_source\obj\Debug\net48\Kata_pro64_Cad2013_de4dot.sourcelink.json

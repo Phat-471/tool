@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "restore": {
+    "e:\\code\\tol\\output\\Kata_pro64_Cad2013_clean_source\\Kata_pro64_Cad2013_de4dot.csproj": {}
+  },
+  "projects": {
+    "e:\\code\\tol\\output\\Kata_pro64_Cad2013_clean_source\\Kata_pro64_Cad2013_de4dot.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "e:\\code\\tol\\output\\Kata_pro64_Cad2013_clean_source\\Kata_pro64_Cad2013_de4dot.csproj",
+        "projectName": "Kata_pro64_Cad2013",
+        "projectPath": "e:\\code\\tol\\output\\Kata_pro64_Cad2013_clean_source\\Kata_pro64_Cad2013_de4dot.csproj",
+        "packagesPath": "C:\\Users\\IT\\.nuget\\packages\\",
+        "outputPath": "e:\\code\\tol\\output\\Kata_pro64_Cad2013_clean_source\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\IT\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net48"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net48": {
+            "targetAlias": "net48",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net48": {
+          "targetAlias": "net48",
+          "dependencies": {
+            "Microsoft.NETFramework.ReferenceAssemblies": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[1.0.3, )",
+              "autoReferenced": true
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.424\\RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,3 @@
+using System.Windows.Forms;
+
+internal delegate DataGridViewSelectedCellCollection GetDelegateDatagridviewselectedcellcollection_1(object objectParam);

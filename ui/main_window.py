@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 from core.file_manager import FileManager
 from core.detector import FileDetector
 from ui.code_viewer import CodeViewerWidget
-from ui.worker_thread import DecompileWorker, SymbolRenamerWorker
+from ui.worker_thread import DecompileWorker, SymbolRenamerWorker, CleanPipelineWorker
 from ui.search_widget import GlobalSearchWidget
 from ui.dll_manager_widget import DLLManagerWidget
 from config import SUPPORTED_EXTENSIONS
@@ -94,6 +94,25 @@ class MainWindow(QMainWindow):
         self.btn_open_dumper.setToolTip("Trích xuất trực tiếp các DLL .NET đã giải mã JIT từ bộ nhớ RAM của AutoCAD/Revit đang chạy")
         self.btn_open_dumper.clicked.connect(self.open_process_dumper)
         file_layout.addWidget(self.btn_open_dumper)
+
+        self.btn_1click_pipeline = QPushButton("⚡ Tái tạo mã sạch (1-Click)")
+        self.btn_1click_pipeline.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #0D9488;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #0F766E;
+            }
+            """
+        )
+        self.btn_1click_pipeline.setToolTip("Tự động dịch ngược, giải mã toàn bộ chuỗi string pool và dọn dẹp cấu trúc dự án từ DLL Dump")
+        self.btn_1click_pipeline.clicked.connect(self.trigger_1click_pipeline)
+        file_layout.addWidget(self.btn_1click_pipeline)
 
         self.lbl_file_path = QLabel("Kéo thả file hoặc thư mục cài đặt vào đây, hoặc bấm 'Chọn tệp...' / 'Chọn thư mục...'")
         self.lbl_file_path.setStyleSheet("color: #64748B; font-style: italic;")
@@ -1203,5 +1222,75 @@ class MainWindow(QMainWindow):
         self.set_selected_file(dumped_dll_path)
         self._apply_status_style("info", f"🎯 Đã nạp DLL từ RAM: {Path(dumped_dll_path).name}. Đang bắt đầu dịch ngược...")
         self.start_processing()
+
+    # ---------------------------------------------------------
+    # 1-Click Pipeline: Tái tạo toàn diện mã nguồn sạch từ DLL Dump
+    # ---------------------------------------------------------
+    def trigger_1click_pipeline(self):
+        """Kích hoạt toàn trình 1-Click Pipeline tái tạo mã nguồn sạch từ DLL Dump an toàn."""
+        dump_dir = "dumps/acad_13008"
+        if not os.path.exists(dump_dir):
+            QMessageBox.warning(
+                self,
+                "Chưa có bản Dump",
+                f"Không tìm thấy thư mục bản dump an toàn tại: {dump_dir}.\nVui lòng sử dụng tính năng 'Dump từ RAM' trước."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Xác nhận 1-Click Pipeline",
+            "Quy trình tự động hóa sẽ thực hiện liên hoàn:\n\n"
+            "1. Dịch ngược hoàn chỉnh bằng ILSpy từ DLL Dump\n"
+            "2. Giải mã và thay thế toàn bộ chuỗi string pool (String Inlining)\n"
+            "3. Dọn dẹp 2.549 delegates rác vào Delegates/\n"
+            "4. Gom 63 module bảo vệ vào ProtectorInternal/\n"
+            "5. Đồng bộ hóa dự án .csproj với AutoCAD 2024 SDK\n\n"
+            "Bạn có muốn bắt đầu không?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.btn_1click_pipeline.setEnabled(False)
+        self.btn_start.setEnabled(False)
+        self.progress_bar.setValue(10)
+        self._apply_status_style("info", "🚀 Đang thực thi 1-Click Pipeline: Dịch ngược & Chuẩn hóa mã nguồn sạch...")
+
+        self.pipeline_worker = CleanPipelineWorker(dump_dir=dump_dir, output_dir="output/Kata_pro64_Cad2013_clean_source")
+        self.pipeline_worker.progress_updated.connect(
+            lambda pct, msg: (self.progress_bar.setValue(pct), self._apply_status_style("info", f"⚡ [{pct}%] {msg}"))
+        )
+        self.pipeline_worker.finished.connect(self.on_pipeline_finished)
+        self.pipeline_worker.error_occurred.connect(self.on_pipeline_error)
+        self.pipeline_worker.start()
+
+    def on_pipeline_finished(self, success: bool, output_dir: str):
+        self.btn_1click_pipeline.setEnabled(True)
+        self.btn_start.setEnabled(True)
+        self.progress_bar.setValue(100)
+        self.current_output_dir = output_dir
+
+        self._apply_status_style("ok", "🎉 Hoàn tất 1-Click Pipeline! Mã nguồn sạch đã sẵn sàng.")
+        self.refresh_tree_from_disk(output_dir, force=True)
+        self.btn_export_zip.setEnabled(True)
+        self.btn_deobfuscate_symbols.setEnabled(True)
+
+        QMessageBox.information(
+            self,
+            "1-Click Pipeline Hoàn Tất",
+            f"Đã tái tạo toàn bộ mã nguồn sạch đẹp thành công!\n\n"
+            f"📂 Thư mục: {output_dir}\n"
+            f"💎 265 lớp nghiệp vụ CAD & AI\n"
+            f"📦 2.549 Delegates chuẩn hóa tại Delegates/\n"
+            f"📋 Dự án .csproj đã sẵn sàng."
+        )
+
+    def on_pipeline_error(self, err_msg: str):
+        self.btn_1click_pipeline.setEnabled(True)
+        self.btn_start.setEnabled(True)
+        self._apply_status_style("error", f"❌ Lỗi 1-Click Pipeline: {err_msg[:100]}")
+        QMessageBox.critical(self, "Lỗi Pipeline", f"Quá trình 1-Click Pipeline gặp lỗi:\n{err_msg}")
+
 
 

@@ -1,0 +1,3 @@
+using System.Windows.Forms;
+
+internal delegate DataGridViewColumnCollection GetDelegateDatagridviewcolumncollection_1(object objectParam);

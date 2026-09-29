@@ -1,0 +1,3 @@
+using System.Management;
+
+internal delegate ManagementObjectCollection GetDelegateManagementobjectcollection_1(object P_0);

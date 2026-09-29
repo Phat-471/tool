@@ -1,0 +1,3 @@
+using Kata_Class_Lib_Revit;
+
+internal delegate double GetDelegateDouble_1(diem P_0, diem P_1);

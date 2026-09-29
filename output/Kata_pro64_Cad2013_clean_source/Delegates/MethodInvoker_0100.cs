@@ -1,0 +1,1 @@
+internal delegate int MethodInvoker_0100(object object_0, string string_0, double double_0, double double_1, double double_2, int int_0, int int_1, string string_1, double double_3, double double_4, int int_2, string string_2, string string_3);

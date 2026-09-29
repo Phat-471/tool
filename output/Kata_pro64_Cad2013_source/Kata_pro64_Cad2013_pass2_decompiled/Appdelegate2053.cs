@@ -1,0 +1,3 @@
+using System.Windows.Forms;
+
+internal delegate TableLayoutColumnStyleCollection GetDelegateTablelayoutcolumnstylecollection_1(object objectParam);

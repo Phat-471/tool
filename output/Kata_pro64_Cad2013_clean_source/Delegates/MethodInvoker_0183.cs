@@ -1,0 +1,3 @@
+using System.Windows.Forms;
+
+internal delegate void MethodInvoker_0183(object object_0, DataGridViewColumnHeadersHeightSizeMode dataGridViewColumnHeadersHeightSizeMode_0);

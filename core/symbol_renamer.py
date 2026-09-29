@@ -117,6 +117,19 @@ class SymbolRenamer:
         "unsafe", "ushort", "using", "virtual", "void", "volatile", "while", "record"
     }
 
+    # Danh sách các thư viện chuẩn, thư viện bên thứ ba và assembly phổ biến không được đổi tên
+    KNOWN_LIBRARIES = {
+        "newtonsoft", "bouncycastle", "microsoft", "system", "adwindows",
+        "autodesk", "itextsharp", "uglytoad", "pdfpig", "pdfium",
+        "qrcoder", "grxcad", "zwcad", "gstarcad", "etabs", "costura",
+        "fody", "sqlite", "entityframework", "autofac", "unity",
+        "castle", "log4net", "nlog", "serilog", "restsharp",
+        "protobuf", "grpc", "automapper", "fluentvalidation",
+        "mediatr", "quartz", "sharpziplib", "icsharpcode", "mono.cecil",
+        "netstandard", "mscorlib", "windowsbase", "presentationcore",
+        "presentationframework", "windows", "mscoree"
+    }
+
     # Các từ vựng lập trình thông dụng không coi là obfuscated
     KNOWN_TERMS = {
         "sha256", "sha512", "sha1", "md5", "win32", "win64", "x86", "x64",
@@ -124,7 +137,28 @@ class SymbolRenamer:
         "i", "j", "k", "n", "x", "y", "z", "e", "id", "db", "ui", "ok", "ms",
         "fs", "io", "to", "at", "dx", "dy", "dz", "pt", "cad", "acad", "autocad",
         "color", "width", "height", "length", "size", "data", "info", "flag",
-        "count", "index", "value", "key", "node", "item", "temp", "result"
+        "count", "index", "value", "key", "node", "item", "temp", "result",
+        "param", "args", "sender", "event", "builder", "factory", "helper",
+        "beam", "rebar", "wall", "slab", "foundation", "floor", "roof", "structure",
+        "structural", "catalog", "compact", "resolver", "resolution", "evidence",
+        "explicit", "payload", "junction", "local", "normalization", "topology",
+        "candidate", "kind", "capture", "match", "snapshot", "semantic", "proposal",
+        "hypothesis", "vision", "workflow", "review", "highlight", "chat", "gpt",
+        "dispatcher", "voice", "audio", "transcription", "palette", "anchor",
+        "vector", "pricing", "guide", "section", "recorder", "history", "session",
+        "storage", "crypto", "fingerprint", "heartbeat", "seat", "entitlement",
+        "claims", "bootstrap", "persisted", "counter", "batch", "access", "expiry",
+        "proof", "ribbon", "serial", "license", "licensing", "integrity", "guard",
+        "thep", "dam", "san", "mong", "coc", "cot", "vach", "thang", "lanh", "to",
+        "mat", "bang", "cat", "ve", "loc", "dim", "sap", "ban", "rai", "noi", "chon",
+        "tu", "dong", "giao", "xien", "tam", "kho", "tong", "du", "hop", "kieu",
+        "xuat", "chay", "moc", "dai", "nhiu", "tai", "trong", "op", "gach", "phan",
+        "loai", "vung", "don", "moi", "cu", "thu", "vien", "nhan", "dien", "tinh",
+        "chia", "in", "tem", "drop", "atlas", "bvbs", "danh", "ten", "diff",
+        "function", "openings", "foudation", "second", "type", "select", "instruction",
+        "ket", "qua", "link", "nay", "tru", "load", "detail", "customer",
+        "acad", "etabs", "revit", "crop", "region", "cell", "excel", "document",
+        "round", "input", "jig", "xdata", "hdd", "mahoa", "ly", "xu", "mbkc"
     }
 
     COMMON_ENGLISH_WORDS = [
@@ -135,22 +169,52 @@ class SymbolRenamer:
         "block", "drawing", "point", "line", "entity", "attribute", "config",
         "setting", "user", "file", "path", "stream", "reader", "writer", "string",
         "app", "main", "core", "tool", "export", "import", "report", "calc",
-        "system", "common", "handler", "factory", "provider", "worker", "job"
+        "system", "common", "handler", "factory", "provider", "worker", "job",
+        "window", "windows", "column", "row", "cell", "sheet", "style", "image",
+        "beam", "rebar", "wall", "slab", "foundation", "structure", "catalog",
+        "compact", "resolver", "evidence", "payload", "junction", "topology",
+        "match", "snapshot", "semantic", "proposal", "vision", "chat", "voice",
+        "storage", "crypto", "heartbeat", "license", "integrity", "guard",
+        "thep", "dam", "san", "mong", "cot", "vach", "thang", "bang", "kho"
     ]
+
+    @classmethod
+    def is_known_library_or_assembly(cls, name: str) -> bool:
+        """Kiểm tra xem tên có phải là thư viện chuẩn / bên thứ 3 hoặc thư mục assembly decompiled."""
+        if not name:
+            return False
+        lower = name.lower()
+        # Thư mục assembly sau khi dịch ngược không được đổi tên
+        if lower.endswith((".dll_decompiled", ".exe_decompiled", ".dll", ".exe")):
+            return True
+        for lib in cls.KNOWN_LIBRARIES:
+            if lower == lib or lower.startswith(f"{lib}.") or lower.startswith(f"{lib}_") or f".{lib}." in f".{lower}.":
+                return True
+        return False
 
     @classmethod
     def is_obfuscated_name(cls, name: str) -> bool:
         """
         Kiểm tra độ tin cậy cao xem một tên định danh có bị làm rối hay không.
-        Bao gồm:
-        - Chuỗi ngẫu nhiên chữ hoa, thường kết hợp số (ajhmisBcZrLc4u5dRKZn, AOvG6sBO4iXLpJ2US7m2, uQ4DbMFRj7Q)
-        - Chuỗi ngẫu nhiên toàn chữ cái nhưng tráo đổi chữ hoa thường bất thường (LyqDDLONXGe, CUwDDzkpuuL)
-        - Cụm phụ âm bất thường >= 4 phụ âm liên tiếp (dnUDFwhWrBF, zkp...)
-        - Decompiler artifacts (<>c, _0x, A_0, Getstatic_8, Class_iemCcl...)
-        - Tên 1-2 ký tự vô nghĩa (ngoại trừ loop/coordinate vars)
+        Bảo vệ 100% các lớp nghiệp vụ CAD, AI và các định danh người dùng đặt.
         """
         if not name or name.lower() in cls.CSHARP_KEYWORDS or name.lower() in cls.KNOWN_TERMS:
             return False
+
+        # Thư viện chuẩn hoặc tên assembly decompiled không coi là obfuscated
+        if cls.is_known_library_or_assembly(name):
+            return False
+
+        # Các tiền tố nghiệp vụ CAD, AI, Form phổ biến không bị coi là obfuscated
+        BUSINESS_PREFIXES = (
+            "AI_", "Kata", "Kata_", "Form", "Form_", "Thep_", "Cad_", "Ve_", "Dam_",
+            "Mong_", "San_", "Cot_", "Ham_", "Lenh_", "Info_", "Edit_", "Add_",
+            "Draw_", "Check_", "Build_", "Run_", "Setting_", "User_", "TK_", "QS_",
+            "PT_", "MDI", "PdfKata", "AIChat", "AIGeometry", "AITool"
+        )
+        for bp in BUSINESS_PREFIXES:
+            if name.startswith(bp):
+                return False
 
         # 1. Ký tự không phải ASCII hoặc ký tự điều khiển
         try:
@@ -161,14 +225,14 @@ class SymbolRenamer:
         # 2. Decompiler artifacts hoặc compiler-generated
         if name.startswith("<>") or name.startswith("_0x") or "__" in name or name.startswith("$$"):
             return True
-        if name.startswith("Class_N_003CModule") or name.startswith("Class_VB_AnonymousType"):
+        if name.startswith("Class_N_003CModule") or name.startswith("Class_VB_AnonymousType") or "AnonymousDelegate" in name:
             return False
 
         # 3. Tiền tố ghép decompiler như Class_iemCclBOqq1tsAdH9mtk, Getstatic_8
         if name.startswith("Class_") and len(name) >= 12:
             return True
-        if re.match(r'^(?:Getstatic|ExecuteAction|HandleEvent|smethod|method|field|class|Delegate)_\d+$', name):
-            return False  # Tên đã chuẩn hóa tạm thời
+        if re.match(r'^(?:Getstatic|ExecuteAction|HandleEvent|smethod|method|field|class|Delegate|MethodInvoker)_\d+$', name):
+            return False  # Tên đã chuẩn hóa
 
         # 4. Tên 1-2 ký tự lạ
         if len(name) <= 2 and name.lower() not in cls.KNOWN_TERMS:
@@ -178,45 +242,40 @@ class SymbolRenamer:
         if re.match(r'^[A-Za-z]_[0-9]+$', name):
             return True
 
-        # 6. Kiểm tra các từ tiếng Anh có nghĩa rõ ràng
+        # 6. Kiểm tra các từ tiếng Anh và thuật ngữ CAD có nghĩa
         name_lower = name.lower()
-        has_english_word = any(w in name_lower for w in cls.COMMON_ENGLISH_WORDS)
-        if has_english_word:
-            # Nếu là từ ghép thông thường như CadManager, UserControl không chứa số lộn xộn
-            if not any(c.isdigit() for c in name) and len(name) < 25:
-                # Kiểm tra xem có cấu trúc PascalCase hợp lệ không
-                pascal_words = re.findall(r'[A-Z][a-z0-9]*', name)
-                if pascal_words and "".join(pascal_words) == name:
-                    return False
+        tokens = re.findall(r'[A-Za-z][a-z0-9]*', name)
+        if tokens:
+            matched = sum(1 for t in tokens if t.lower() in cls.KNOWN_TERMS or t.lower() in cls.COMMON_ENGLISH_WORDS)
+            if matched / len(tokens) >= 0.35:
+                return False
 
-        # 7. Chuỗi ngẫu nhiên có cả chữ hoa, chữ thường và chữ số (độ dài >= 6)
+        # 7. Chuỗi ngẫu nhiên đặc trưng của .NET Reactor:
+        # Độ dài >= 16 ký tự và có sự tráo đổi chữ hoa thường ngẫu nhiên / ký tự số rải rác bên trong
         has_upper = any(c.isupper() for c in name)
         has_lower = any(c.islower() for c in name)
         has_digit = any(c.isdigit() for c in name)
 
-        if len(name) >= 6 and has_upper and has_lower and has_digit:
-            return True
-
-        # 8. Chuỗi dài ngẫu nhiên >= 14 ký tự
-        if len(name) >= 14 and not has_english_word:
-            return True
-
-        # 9. Cụm phụ âm bất thường (4 phụ âm trở lên liên tiếp)
-        # Tiếng Anh/Việt hiếm khi có 4 phụ âm liên tiếp trong một từ đơn
+        # Cụm phụ âm bất thường >= 4 phụ âm liên tiếp (dnUDFwhWrBF, zkp...)
         consonants = re.search(r'[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]{4,}', name)
-        if consonants and not any(k in name_lower for k in ["struct", "length", "string"]):
+        if consonants and not any(k in name_lower for k in ["struct", "length", "string", "switch"]):
             return True
 
-        # 10. Tráo đổi chữ hoa thường bất thường:
-        # Ví dụ: chữ thường xen kẽ 2+ chữ hoa rồi chữ thường (LyqDDLONXGe, CUwDDzkpuuL)
+        # Tráo đổi chữ hoa thường bất thường: chữ thường xen kẽ 2+ chữ hoa rồi chữ thường (LyqDDLONXGe, CUwDDzkpuuL)
         if len(name) >= 6:
             if re.search(r'[a-z][A-Z]{2,}[a-z]', name) or re.search(r'[A-Z]{2,}[a-z][A-Z]', name):
                 return True
 
-        # 11. Tỷ lệ nguyên âm cực thấp (< 20%) ở chuỗi dài >= 6
-        if len(name) >= 6:
+        # Chuỗi ngẫu nhiên có cả chữ hoa, chữ thường và chữ số không chứa từ có nghĩa
+        if len(name) >= 8 and has_upper and has_lower and has_digit:
+            # Nếu có số ngẫu nhiên xen giữa các chữ cái (không phải số phiên bản ở cuối)
+            if re.search(r'[A-Za-z][0-9]+[A-Za-z]', name):
+                return True
+
+        # Chuỗi ngẫu nhiên dài >= 16 ký tự mà không chứa từ có nghĩa
+        if len(name) >= 16 and (has_upper and has_lower):
             vowels = sum(1 for c in name_lower if c in "aeiouy")
-            if vowels / len(name) < 0.20:
+            if vowels / len(name) < 0.25:
                 return True
 
         return False
@@ -416,15 +475,29 @@ class SymbolRenamer:
                 "return_type": ret_type
             })
 
-        # 3.3 Tham số compiler tự sinh như type_0, int_0, string_0
-        param_pattern = re.compile(r'\b(?P<type>[A-Za-z0-9_<>]+)\s+(?P<pname>[a-z]+_[0-9]+)\b')
+        # 3.3 Tham số và biến compiler/de4dot tự sinh như type_0, int_0, string_0
+        param_pattern = re.compile(r'\b(?P<type>[A-Za-z0-9_<>\[\],]+)\s+(?P<pname>[a-z]+_(?P<num>[0-9]+))\b')
+        param_counters: Dict[str, int] = {}
         for match in param_pattern.finditer(content):
             ptype = match.group("type")
             pname = match.group("pname")
-            c_type = cls.clean_identifier(ptype.split(".")[-1])
-            new_pname = f"{c_type[:1].lower()}{c_type[1:]}Param"
-            if new_pname != pname and pname not in renamed_map:
-                renamed_map[pname] = new_pname
+            num_str = match.group("num")
+
+            if pname in renamed_map:
+                continue
+
+            c_type = cls.clean_identifier(ptype.split(".")[-1].replace("[]", "Arr"))
+            type_prefix = f"{c_type[:1].lower()}{c_type[1:]}"
+
+            # Giữ nguyên số thứ tự duy nhất (VD: stringVal_0, boolVal_1 thay vì gộp chung stringParam)
+            if num_str:
+                new_pname = f"{type_prefix}Val_{num_str}"
+            else:
+                cnt = param_counters.get(type_prefix, 0) + 1
+                param_counters[type_prefix] = cnt
+                new_pname = f"{type_prefix}Val_{cnt}"
+
+            renamed_map[pname] = new_pname
 
         updated_content = content
         for old_name, new_name in renamed_map.items():
@@ -477,9 +550,10 @@ class SymbolRenamer:
         # GIAI ĐOẠN 1: Chuẩn hóa Tên Thư mục & Namespace
         # ══════════════════════════════════════════════════════════════
         subdirs = [p for p in dir_path.iterdir() if p.is_dir() and not p.name.startswith((".", "obj", "bin"))]
-        obf_dirs = [d for d in subdirs if cls.is_obfuscated_name(d.name)]
+        # Không đổi tên các thư mục thư viện chuẩn hoặc assembly decompiled
+        obf_dirs = [d for d in subdirs if cls.is_obfuscated_name(d.name) and not cls.is_known_library_or_assembly(d.name)]
 
-        used_dir_names: Set[str] = {d.name for d in subdirs if not cls.is_obfuscated_name(d.name)}
+        used_dir_names: Set[str] = {d.name for d in subdirs if not cls.is_obfuscated_name(d.name) or cls.is_known_library_or_assembly(d.name)}
         folder_counter = 1
 
         for obf_dir in obf_dirs:
@@ -549,7 +623,7 @@ class SymbolRenamer:
                 type_name = type_m.group("name")
                 base_type = type_m.group("base") or ""
 
-                if not cls.is_obfuscated_name(type_name):
+                if not cls.is_obfuscated_name(type_name) or "Kata_pro64_Cad2013" in cs_path.parts:
                     continue
 
                 new_type_name = None
@@ -654,8 +728,17 @@ class SymbolRenamer:
                     pass
 
             if target_new_stem and target_new_stem != stem:
-                new_file_name = f"{cls.clean_identifier(target_new_stem)}.cs"
+                base_name = cls.clean_identifier(target_new_stem)
+                new_file_name = f"{base_name}.cs"
                 new_file_path = cs_path.parent / new_file_name
+
+                # Chống ghi đè tệp: nếu tệp đã tồn tại và không phải là chính nó, tự động thêm hậu tố _01, _02...
+                if new_file_path.exists() and new_file_path != cs_path:
+                    counter = 1
+                    while new_file_path.exists() and new_file_path != cs_path:
+                        new_file_name = f"{base_name}_{counter:02d}.cs"
+                        new_file_path = cs_path.parent / new_file_name
+                        counter += 1
 
                 if not new_file_path.exists() or new_file_path == cs_path:
                     try:
@@ -704,12 +787,183 @@ class SymbolRenamer:
         except Exception:
             pass
 
+    @classmethod
+    def organize_delegates_and_clean_project(cls, project_dir: str) -> Dict[str, Any]:
+        """
+        Thực hiện Phương án A:
+        1. Quét toàn bộ các tệp delegate rác tại thư mục gốc dự án.
+        2. Tạo thư mục Delegates/ và di chuyển từng delegate vào đó dưới tên MethodInvoker_0001.cs ...
+        3. Cập nhật tên delegate bên trong file thành MethodInvoker_xxxx (giữ global namespace).
+        4. Quét toàn bộ các file .cs trong dự án (bao gồm cả thư mục nghiệp vụ Kata_pro64_Cad2013)
+           và đồng bộ hóa mọi lời gọi tham chiếu đến các delegate này.
+        5. Gom nhóm 63 thư mục obfuscated rác vào thư mục ProtectorInternal/ để thư mục gốc sạch sẽ 100%.
+        6. Tinh chỉnh tệp .csproj (<LangVersion>latest</LangVersion>, sửa đường dẫn HintPath cho các assembly).
+        7. Xuất báo cáo renaming_report.json.
+        """
+        proj_path = Path(project_dir)
+        if not proj_path.exists():
+            return {"success": False, "message": "Thư mục dự án không tồn tại."}
+
+        report: Dict[str, Any] = {
+            "success": True,
+            "delegates_moved": 0,
+            "delegates_referenced_updated": 0,
+            "protector_dirs_moved": 0,
+            "csproj_updated": False,
+            "details": {
+                "delegates": [],
+                "referenced_delegates": [],
+                "protector_dirs": []
+            }
+        }
+
+        # Regex nhận diện delegate ở thư mục gốc (hỗ trợ cả con trỏ, tuple, nullable)
+        del_regex = re.compile(
+            r'^\s*(?:internal|public|private|protected)?\s*(?:unsafe)?\s*delegate\s*(?:\([^)]*\)|[A-Za-z0-9_<>\[\],\.\*\?]+)\s+([A-Za-z0-9_]+)',
+            re.MULTILINE
+        )
+
+        root_cs_files = [f for f in proj_path.glob("*.cs") if f.is_file()]
+        delegate_files: List[Tuple[Path, str]] = []
+
+        for f in root_cs_files:
+            try:
+                txt = f.read_text(encoding="utf-8", errors="ignore")
+                m = del_regex.search(txt)
+                if m and not re.search(r'\bclass\s+', txt) and not re.search(r'\bstruct\s+', txt):
+                    old_name = m.group(1)
+                    delegate_files.append((f, old_name))
+            except Exception:
+                pass
+
+        # Sắp xếp danh sách delegate theo tên cũ để thứ tự đánh số ổn định
+        delegate_files.sort(key=lambda x: x[1])
+
+        delegates_dir = proj_path / "Delegates"
+        delegates_dir.mkdir(exist_ok=True)
+
+        delegate_rename_map: Dict[str, str] = {}
+
+        # 2. Di chuyển và chuẩn hóa tên các tệp Delegate
+        for idx, (old_file, old_name) in enumerate(delegate_files, start=1):
+            new_name = f"MethodInvoker_{idx:04d}"
+            delegate_rename_map[old_name] = new_name
+
+            try:
+                content = old_file.read_text(encoding="utf-8", errors="replace")
+                new_content = re.sub(r'\b' + re.escape(old_name) + r'\b', new_name, content)
+                
+                target_file = delegates_dir / f"{new_name}.cs"
+                target_file.write_text(new_content, encoding="utf-8")
+                old_file.unlink()
+
+                report["delegates_moved"] += 1
+                report["details"]["delegates"].append({
+                    "old_name": old_name,
+                    "new_name": new_name,
+                    "old_file": old_file.name,
+                    "new_file": target_file.name
+                })
+            except Exception:
+                pass
+
+        # 3. Đồng bộ hóa các tham chiếu Delegate trong toàn bộ dự án
+        all_other_cs = list(proj_path.rglob("*.cs"))
+        referenced_delegates_found: Set[str] = set()
+
+        del_keys_set = set(delegate_rename_map.keys())
+
+        for cs_path in all_other_cs:
+            if cs_path.parent == delegates_dir:
+                continue
+            try:
+                content = cs_path.read_text(encoding="utf-8", errors="replace")
+                tokens_in_file = set(re.findall(r'[A-Za-z0-9_]+', content))
+                needed_renames = tokens_in_file.intersection(del_keys_set)
+
+                if needed_renames:
+                    modified = False
+                    for old_name in needed_renames:
+                        new_name = delegate_rename_map[old_name]
+                        pattern = r'\b' + re.escape(old_name) + r'\b'
+                        if re.search(pattern, content):
+                            content = re.sub(pattern, new_name, content)
+                            modified = True
+                            referenced_delegates_found.add(old_name)
+                    
+                    if modified:
+                        cs_path.write_text(content, encoding="utf-8")
+            except Exception:
+                pass
+
+        report["delegates_referenced_updated"] = len(referenced_delegates_found)
+        for old_name in sorted(referenced_delegates_found):
+            report["details"]["referenced_delegates"].append({
+                "old_name": old_name,
+                "new_name": delegate_rename_map.get(old_name, "")
+            })
+
+        # 4. Gom nhóm các thư mục Obfuscated Protector vào ProtectorInternal/
+        legit_dir_names = {
+            "Kata_pro64_Cad2013", "Kata_pro64_Cad2013.My", "Kata_pro64_Cad2013.My.Resources",
+            "Properties", "Delegates", "ProtectorInternal", "bin", "obj", ".vs"
+        }
+        
+        protector_dir = proj_path / "ProtectorInternal"
+        obf_dirs = [d for d in proj_path.iterdir() if d.is_dir() and d.name not in legit_dir_names and not d.name.startswith(".")]
+
+        if obf_dirs:
+            protector_dir.mkdir(exist_ok=True)
+            for d in obf_dirs:
+                try:
+                    dest = protector_dir / d.name
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.move(str(d), str(dest))
+                    report["protector_dirs_moved"] += 1
+                    report["details"]["protector_dirs"].append(d.name)
+                except Exception:
+                    pass
+
+        # 5. Tinh chỉnh tệp dự án .csproj
+        for csproj_file in proj_path.glob("*.csproj"):
+            try:
+                cp_text = csproj_file.read_text(encoding="utf-8", errors="replace")
+                orig_cp = cp_text
+                # Sửa LangVersion 14.0 -> latest
+                cp_text = re.sub(r'<LangVersion>14\.0</LangVersion>', '<LangVersion>latest</LangVersion>', cp_text)
+                # Sửa HintPath output/dumped_acad... -> ../dumped_acad...
+                cp_text = cp_text.replace("output/dumped_acad.exe_13008/", "../dumped_acad.exe_13008/")
+                cp_text = cp_text.replace("output\\dumped_acad.exe_13008\\", "..\\dumped_acad.exe_13008\\")
+                
+                if cp_text != orig_cp:
+                    csproj_file.write_text(cp_text, encoding="utf-8")
+                    report["csproj_updated"] = True
+            except Exception:
+                pass
+
+        # 6. Ghi báo cáo JSON
+        report_file = proj_path / "renaming_report.json"
+        try:
+            report_file.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+        except Exception:
+            pass
+
         return report
 
     @classmethod
     def get_summary_text(cls, report: Dict[str, Any]) -> str:
         """Tạo chuỗi thông báo kết quả chuẩn hóa định danh mã nguồn."""
         parts = []
+        if report.get("delegates_moved", 0) > 0:
+            parts.append(f"gom nhóm {report['delegates_moved']} delegates vào Delegates/")
+        if report.get("delegates_referenced_updated", 0) > 0:
+            parts.append(f"đồng bộ {report['delegates_referenced_updated']} tham chiếu delegate trong mã nguồn")
+        if report.get("protector_dirs_moved", 0) > 0:
+            parts.append(f"gom {report['protector_dirs_moved']} thư mục protector vào ProtectorInternal/")
         if report.get("directories_renamed", 0) > 0:
             parts.append(f"đổi tên {report['directories_renamed']} thư mục")
         if report.get("files_renamed", 0) > 0:

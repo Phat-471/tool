@@ -1,0 +1,3 @@
+using System.Windows.Forms;
+
+internal delegate Control GetDelegateControl_1(object objectParam, int intParam);

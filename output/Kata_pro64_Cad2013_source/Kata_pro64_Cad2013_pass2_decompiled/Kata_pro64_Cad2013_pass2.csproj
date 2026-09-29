@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <AssemblyName>Kata_pro64_Cad2013</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <UseWindowsForms>True</UseWindowsForms>
+    <TargetFramework>net48</TargetFramework>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LangVersion>14.0</LangVersion>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <CheckForOverflowUnderflow>False</CheckForOverflowUnderflow>
+  </PropertyGroup>
+  <PropertyGroup>
+    <RootNamespace />
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="WinAtEZVFEcaZJ0jELWC.Ecf8kaZVGfufnALiVALx" />
+    <None Remove="XkDFo3ZVBggBaU11LpYY.EMgXLyZVDGFbi7N8VcrO" />
+    <None Remove="HjQMnGZVOF1u8DlLUXnh.GxgNIVZVhQyFGN838LL0" />
+    <None Remove="hPgIOiZVZnG3C7Zie8im.JuPwLmZVCoPtPrXBZioU" />
+    <None Remove="5jZdCHZVnu5AgDH2VubL.YBCSDyZVRqGQhBtF4YFw" />
+    <None Remove="XstAdrZVwWH8dJ0kNJ9t.WVdniYZV8e41O0qAYCZD" />
+    <EmbeddedResource Include="WinAtEZVFEcaZJ0jELWC.Ecf8kaZVGfufnALiVALx" LogicalName="WinAtEZVFEcaZJ0jELWC.Ecf8kaZVGfufnALiVALx" />
+    <EmbeddedResource Include="XkDFo3ZVBggBaU11LpYY.EMgXLyZVDGFbi7N8VcrO" LogicalName="XkDFo3ZVBggBaU11LpYY.EMgXLyZVDGFbi7N8VcrO" />
+    <EmbeddedResource Include="HjQMnGZVOF1u8DlLUXnh.GxgNIVZVhQyFGN838LL0" LogicalName="HjQMnGZVOF1u8DlLUXnh.GxgNIVZVhQyFGN838LL0" />
+    <EmbeddedResource Include="hPgIOiZVZnG3C7Zie8im.JuPwLmZVCoPtPrXBZioU" LogicalName="hPgIOiZVZnG3C7Zie8im.JuPwLmZVCoPtPrXBZioU" />
+    <EmbeddedResource Include="5jZdCHZVnu5AgDH2VubL.YBCSDyZVRqGQhBtF4YFw" LogicalName="5jZdCHZVnu5AgDH2VubL.YBCSDyZVRqGQhBtF4YFw" />
+    <EmbeddedResource Include="XstAdrZVwWH8dJ0kNJ9t.WVdniYZV8e41O0qAYCZD" LogicalName="XstAdrZVwWH8dJ0kNJ9t.WVdniYZV8e41O0qAYCZD" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Microsoft.VisualBasic" />
+    <Reference Include="accoremgd" />
+    <Reference Include="Kata_Class_Lib_Revit" />
+    <Reference Include="Acdbmgd" />
+    <Reference Include="System.Core" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="Newtonsoft.Json" />
+    <Reference Include="iTextSharp.LGPLv2.Core" />
+    <Reference Include="Docnet.Core" />
+    <Reference Include="UglyToad.PdfPig" />
+    <Reference Include="UglyToad.PdfPig.Core" />
+    <Reference Include="System.IO.Compression">
+      <HintPath>C:\Program Files\dotnet\shared\Microsoft.NETCore.App\10.0.11\System.IO.Compression.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Xml" />
+    <Reference Include="Acmgd" />
+    <Reference Include="QRCoder" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Management" />
+    <Reference Include="CSiAPIv1" />
+    <Reference Include="System.Security" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="Security" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+  </ItemGroup>
+</Project>

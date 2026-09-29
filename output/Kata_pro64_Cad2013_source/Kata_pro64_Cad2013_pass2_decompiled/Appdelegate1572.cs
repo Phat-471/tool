@@ -1,0 +1,3 @@
+using Autodesk.AutoCAD.EditorInput;
+
+internal delegate PromptPointResult GetDelegatePromptpointresult_1(object objectParam, JigPromptPointOptions jigPromptPointOptions_0);

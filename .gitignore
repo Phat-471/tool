@@ -3,12 +3,14 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Temporary uploads & outputs
+# Temporary uploads
 uploads/*
 !uploads/.gitkeep
-output/*
-!output/.gitkeep
 scratch/
+
+# Ignore large archives (>100MB exceeds GitHub push limit) & temporary batch workspaces
+output/*_workspace/
+output/kata_pro_all_modules.zip
 
 
 # External large tools

@@ -1,0 +1,3 @@
+using Autodesk.AutoCAD.DatabaseServices;
+
+internal delegate DynamicBlockReferencePropertyCollection GetDelegateDynamicblockreferencepropertycollection_1(object objectParam);

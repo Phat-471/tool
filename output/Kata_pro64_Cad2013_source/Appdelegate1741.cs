@@ -1,0 +1,1 @@
+internal delegate int GetDelegateInt_1(object P_0, string P_1, string P_2, string P_3, int P_4, int P_5, double P_6, int P_7, int P_8, int P_9, string P_10, string P_11, double P_12, int P_13, int P_14, bool P_15);

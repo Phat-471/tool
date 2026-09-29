@@ -1,0 +1,3 @@
+using Autodesk.AutoCAD.ApplicationServices;
+
+internal delegate void GetDelegateVoid_1(object objectParam, DocumentCollectionEventHandler documentCollectionEventHandler_0);
